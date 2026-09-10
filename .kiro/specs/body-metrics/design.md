@@ -2,20 +2,19 @@
 
 ## Overview
 
-Fitur Body Metrics adalah modul inti aplikasi fitness monitoring yang memungkinkan pengguna melacak komposisi tubuh secara akurat dari berbagai perangkat (HP dan desktop). Karena aplikasi bersifat multi-user dan dihosting, semua data disimpan di **PostgreSQL** melalui **Prisma ORM** dan diakses melalui **Next.js Route Handlers**. Setiap entry terikat ke `userId` pengguna yang sedang login.
+Fitur Body Metrics adalah modul inti aplikasi fitness monitoring yang memungkinkan pengguna melacak komposisi tubuh secara akurat dari berbagai perangkat (HP dan desktop). Semua data disimpan di **PostgreSQL** melalui **Prisma ORM** dan diakses melalui **Next.js Route Handlers**. Aplikasi bersifat single-user — tidak ada autentikasi pada tahap ini (auth akan ditambahkan sebagai enhancement terpisah).
 
 Modul ini terdiri dari empat sub-sistem utama: **Input Form** untuk entri data harian, **Calculator** sebagai engine kalkulasi US Navy Body Fat Formula dan BMI, **Chart** untuk visualisasi tren, dan **History View** untuk manajemen riwayat data.
 
-Autentikasi ditangani oleh **NextAuth.js v5 (Auth.js)** dengan session berbasis database. Setiap API route memverifikasi session sebelum memproses request. Kalkulasi formula tetap berjalan sebagai pure functions di sisi klien — tidak ada kalkulasi di server.
+Kalkulasi formula tetap berjalan sebagai pure functions di sisi klien — tidak ada kalkulasi di server.
 
 ### Keputusan Arsitektur Utama
 
 | Keputusan | Pilihan | Rasional |
 |---|---|---|
-| Persistent storage | PostgreSQL + Prisma ORM | Multi-user, multi-device, data tersimpan di server |
+| Persistent storage | PostgreSQL + Prisma ORM | Data tersimpan di server, siap untuk multi-device |
 | API layer | Next.js Route Handlers (`src/app/api/`) | Akses DB hanya dari server; tidak expose Prisma ke client |
-| Autentikasi | NextAuth.js v5 (Auth.js) | Session-based, terintegrasi dengan Next.js App Router |
-| Auth guard | `auth()` dari NextAuth v5 di setiap route handler | Semua endpoint dilindungi, kepemilikan diverifikasi per entry |
+| Autentikasi | Tidak ada (single-user) | Disederhanakan untuk tahap awal; auth ditambahkan nanti |
 | Chart library | Recharts | React-native, TypeScript support baik, composable API |
 | State management | React `useState` + custom hook `useBodyMetrics` | Hook memanggil `fetch()` ke API, bukan localStorage |
 | Kalkulasi | Pure functions di `_lib/calculator.ts` (client-side) | Formula deterministik, tidak membutuhkan server round-trip |
@@ -41,7 +40,6 @@ flowchart TD
     end
 
     subgraph Server["Next.js Server"]
-        Auth["NextAuth.js v5\nauth() session middleware"]
         API1["GET /api/body-metrics"]
         API2["POST /api/body-metrics"]
         API3["PATCH /api/body-metrics/[id]"]
@@ -50,7 +48,7 @@ flowchart TD
     end
 
     subgraph DB["Database"]
-        PG["PostgreSQL\nBodyMetricsEntry table\nUser table"]
+        PG["PostgreSQL\nBodyMetricsEntry table"]
     end
 
     Page --> Client
@@ -63,11 +61,10 @@ flowchart TD
     Hook -- "fetch()" --> API2
     Hook -- "fetch()" --> API3
     Hook -- "fetch()" --> API4
-    API1 --> Auth
-    API2 --> Auth
-    API3 --> Auth
-    API4 --> Auth
-    Auth --> Prisma
+    API1 --> Prisma
+    API2 --> Prisma
+    API3 --> Prisma
+    API4 --> Prisma
     Prisma --> PG
 ```
 
@@ -81,7 +78,6 @@ sequenceDiagram
     participant ZodClient as "Zod (client)"
     participant Hook as "useBodyMetrics"
     participant API as "POST /api/body-metrics"
-    participant NextAuth as "NextAuth auth()"
     participant ZodServer as "Zod (server)"
     participant Prisma
     participant DB as "PostgreSQL"
@@ -96,29 +92,20 @@ sequenceDiagram
         Calculator-->>InputForm: { bodyFatPercentage, bmi, category }
         InputForm->>Hook: saveEntry(formData + calcResult)
         Hook->>API: POST /api/body-metrics\n{ body: JSON }
-        API->>NextAuth: auth() — verify session
-        alt Session tidak valid
-            NextAuth-->>API: null session
-            API-->>Hook: 401 Unauthorized
-            Hook-->>InputForm: error "Sesi berakhir"
-            InputForm-->>User: redirect ke login
-        else Session valid
-            NextAuth-->>API: { userId }
-            API->>ZodServer: bodyMetricsSchema.safeParse(body)
-            alt Validasi server gagal
-                ZodServer-->>API: errors
-                API-->>Hook: 400 Bad Request
-                Hook-->>InputForm: validation errors
-            else Validasi server sukses
-                API->>Prisma: prisma.bodyMetricsEntry.create({ userId, ...data })
-                Prisma->>DB: INSERT INTO body_metrics_entries
-                DB-->>Prisma: created entry
-                Prisma-->>API: BodyMetricsEntry
-                API-->>Hook: 201 Created { data: entry }
-                Hook-->>InputForm: { success: true, entry }
-                InputForm-->>User: notifikasi konfirmasi (3 detik)
-                Hook->>Hook: update entries state
-            end
+        API->>ZodServer: bodyMetricsSchema.safeParse(body)
+        alt Validasi server gagal
+            ZodServer-->>API: errors
+            API-->>Hook: 400 Bad Request
+            Hook-->>InputForm: validation errors
+        else Validasi server sukses
+            API->>Prisma: prisma.bodyMetricsEntry.create({ ...data })
+            Prisma->>DB: INSERT INTO body_metrics_entries
+            DB-->>Prisma: created entry
+            Prisma-->>API: BodyMetricsEntry
+            API-->>Hook: 201 Created { data: entry }
+            Hook-->>InputForm: { success: true, entry }
+            InputForm-->>User: notifikasi konfirmasi (3 detik)
+            Hook->>Hook: update entries state
         end
     end
 ```
@@ -222,7 +209,6 @@ export type BodyCompositionCategory = 'underfat' | 'normal' | 'overfat' | 'obese
  */
 export interface BodyMetricsEntry {
   id: string                        // CUID dari Prisma
-  userId: string                    // relasi ke User
   measurementDate: string           // format: YYYY-MM-DD
   height: number                    // cm, 100–250
   weight: number                    // kg, 20–300
@@ -333,21 +319,8 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id             String               @id @default(cuid())
-  email          String               @unique
-  name           String?
-  hashedPassword String?
-  createdAt      DateTime             @default(now())
-  updatedAt      DateTime             @updatedAt
-  bodyMetrics    BodyMetricsEntry[]
-
-  @@map("users")
-}
-
 model BodyMetricsEntry {
   id                     String    @id @default(cuid())
-  userId                 String
   measurementDate        DateTime  @db.Date
   height                 Float
   weight                 Float
@@ -365,12 +338,10 @@ model BodyMetricsEntry {
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  // Unique constraint: satu user tidak boleh punya dua entry pada hari yang sama
-  @@unique([userId, measurementDate])
-  // Index untuk query umum: ambil semua entry milik user, diurutkan
-  @@index([userId, measurementDate(sort: Desc)])
+  // Unique constraint: tidak boleh ada dua entry pada hari yang sama
+  @@unique([measurementDate])
+  // Index untuk query umum: ambil semua entry diurutkan dari terbaru
+  @@index([measurementDate(sort: Desc)])
 
   @@map("body_metrics_entries")
 }
@@ -401,17 +372,15 @@ if (process.env.NODE_ENV !== 'production') {
 
 ## API Routes
 
-Semua route berada di `src/app/api/body-metrics/`. Setiap handler:
+Semua route berada di `src/app/api/body-metrics/`. Tidak ada auth guard — semua endpoint terbuka. Setiap handler:
 
-1. Memanggil `auth()` dari NextAuth v5 untuk mendapatkan session
-2. Mengembalikan `401` jika session tidak ada
-3. Memvalidasi input dengan Zod
-4. Memverifikasi kepemilikan entry (untuk PATCH dan DELETE)
-5. Mengembalikan `ApiResponse<T>` sebagai JSON
+1. Memvalidasi input dengan Zod
+2. Menjalankan operasi Prisma
+3. Mengembalikan `ApiResponse<T>` sebagai JSON
 
 ### `GET /api/body-metrics`
 
-Mengambil semua entry milik user yang sedang login.
+Mengambil semua entry, diurutkan dari terbaru.
 
 **Query params opsional:**
 - `from` — tanggal mulai (format: `YYYY-MM-DD`)
@@ -419,17 +388,11 @@ Mengambil semua entry milik user yang sedang login.
 
 **Responses:**
 - `200 OK` — `ApiResponse<BodyMetricsEntry[]>`
-- `401 Unauthorized` — session tidak ada atau kadaluarsa
 - `500 Internal Server Error` — database error
 
 ```typescript
 // src/app/api/body-metrics/route.ts (GET)
 export async function GET(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user?.id) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
-
   const { searchParams } = request.nextUrl
   const from = searchParams.get('from')
   const to = searchParams.get('to')
@@ -437,7 +400,6 @@ export async function GET(request: NextRequest) {
   try {
     const entries = await prisma.bodyMetricsEntry.findMany({
       where: {
-        userId: session.user.id,
         ...(from || to ? {
           measurementDate: {
             ...(from ? { gte: new Date(from) } : {}),
@@ -463,17 +425,11 @@ Membuat entry baru.
 **Responses:**
 - `201 Created` — `ApiResponse<BodyMetricsEntry>`
 - `400 Bad Request` — validasi Zod gagal, atau duplikasi tanggal
-- `401 Unauthorized`
 - `500 Internal Server Error`
 
 ```typescript
 // src/app/api/body-metrics/route.ts (POST)
 export async function POST(request: NextRequest) {
-  const session = await auth()
-  if (!session?.user?.id) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
-
   const body = await request.json()
   const validated = createEntrySchema.safeParse(body)
   if (!validated.success) {
@@ -485,7 +441,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const entry = await prisma.bodyMetricsEntry.create({
-      data: { ...validated.data, userId: session.user.id },
+      data: validated.data,
     })
     return NextResponse.json({ success: true, data: entry }, { status: 201 })
   } catch (e) {
@@ -503,33 +459,23 @@ export async function POST(request: NextRequest) {
 
 ### `PATCH /api/body-metrics/[id]`
 
-Memperbarui entry yang sudah ada. Hanya pemilik entry yang boleh memperbarui.
+Memperbarui entry yang sudah ada berdasarkan `id`.
 
 **Request body:** partial `CreateEntryPayload` (JSON)
 
 **Responses:**
 - `200 OK` — `ApiResponse<BodyMetricsEntry>`
 - `400 Bad Request` — validasi gagal atau duplikasi tanggal
-- `401 Unauthorized`
-- `403 Forbidden` — entry dimiliki user lain
 - `404 Not Found` — entry tidak ditemukan
 - `500 Internal Server Error`
 
 ```typescript
 // src/app/api/body-metrics/[id]/route.ts (PATCH)
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
-  const session = await auth()
-  if (!session?.user?.id) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
-
   const { id } = await params
   const existing = await prisma.bodyMetricsEntry.findUnique({ where: { id } })
   if (!existing) {
     return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 })
-  }
-  if (existing.userId !== session.user.id) {
-    return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 })
   }
 
   const body = await request.json()
@@ -558,30 +504,20 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
 ### `DELETE /api/body-metrics/[id]`
 
-Menghapus entry. Hanya pemilik entry yang boleh menghapus.
+Menghapus entry berdasarkan `id`.
 
 **Responses:**
 - `204 No Content` — berhasil dihapus
-- `401 Unauthorized`
-- `403 Forbidden`
-- `404 Not Found`
+- `404 Not Found` — entry tidak ditemukan
 - `500 Internal Server Error`
 
 ```typescript
 // src/app/api/body-metrics/[id]/route.ts (DELETE)
 export async function DELETE(request: NextRequest, { params }: { params: { id: string } }) {
-  const session = await auth()
-  if (!session?.user?.id) {
-    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-  }
-
   const { id } = await params
   const existing = await prisma.bodyMetricsEntry.findUnique({ where: { id } })
   if (!existing) {
     return NextResponse.json({ success: false, error: 'Not found' }, { status: 404 })
-  }
-  if (existing.userId !== session.user.id) {
-    return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 })
   }
 
   try {
@@ -597,7 +533,7 @@ export async function DELETE(request: NextRequest, { params }: { params: { id: s
 
 ## Calculator Module
 
-Calculator tetap berjalan sepenuhnya di sisi klien sebagai pure functions. Tidak ada perubahan dari desain sebelumnya.
+Calculator tetap berjalan sepenuhnya di sisi klien sebagai pure functions.
 
 ### US Navy Body Fat Formula
 
@@ -714,11 +650,6 @@ export function useBodyMetrics() {
     async function load() {
       try {
         const res = await fetch('/api/body-metrics')
-        if (res.status === 401) {
-          // Session berakhir — redirect ke login
-          window.location.href = '/auth/login'
-          return
-        }
         const json: ApiResponse<BodyMetricsEntry[]> = await res.json()
         if (json.success) {
           setState({ entries: json.data, isLoading: false, error: null })
@@ -797,7 +728,6 @@ export function useBodyMetrics() {
 | Kolom | Tipe PostgreSQL | Prisma | Keterangan |
 |---|---|---|---|
 | `id` | `TEXT` | `String @id @default(cuid())` | Primary key, CUID |
-| `user_id` | `TEXT` | `String` | Foreign key ke `users.id` |
 | `measurement_date` | `DATE` | `DateTime @db.Date` | Tanggal pengukuran, tanpa waktu |
 | `height` | `DOUBLE PRECISION` | `Float` | cm |
 | `weight` | `DOUBLE PRECISION` | `Float` | kg |
@@ -818,33 +748,24 @@ export function useBodyMetrics() {
 ### Indeks dan Constraints
 
 ```sql
--- Unique constraint: satu user tidak boleh memiliki dua entry pada tanggal yang sama
--- Ini juga menjadi database-level enforcement untuk Property 16
+-- Unique constraint: tidak boleh ada dua entry pada tanggal yang sama
 ALTER TABLE body_metrics_entries
-  ADD CONSTRAINT uq_user_date UNIQUE (user_id, measurement_date);
+  ADD CONSTRAINT uq_measurement_date UNIQUE (measurement_date);
 
--- Composite index untuk query paling umum:
--- "Ambil semua entry milik user X, diurutkan dari terbaru"
-CREATE INDEX idx_user_date_desc
-  ON body_metrics_entries (user_id, measurement_date DESC);
+-- Index untuk query paling umum: ambil semua entry diurutkan dari terbaru
+CREATE INDEX idx_measurement_date_desc
+  ON body_metrics_entries (measurement_date DESC);
 ```
-
-### Relasi User ↔ BodyMetricsEntry
-
-- Satu `User` dapat memiliki nol atau banyak `BodyMetricsEntry`
-- Satu `BodyMetricsEntry` dimiliki tepat oleh satu `User`
-- Cascade delete: ketika User dihapus, semua entry miliknya ikut dihapus
-- Isolasi data: API routes selalu memfilter dengan `userId` dari session — pengguna tidak bisa mengakses data pengguna lain
 
 ### Pertimbangan Kapasitas
 
-Rata-rata entry ~1 KB data JSON, disimpan efisien di PostgreSQL. Untuk pengguna aktif yang mencatat setiap hari selama 10 tahun (~3.650 entry), total data per user sekitar 3–4 MB. Sangat ringan untuk PostgreSQL.
+Rata-rata entry ~1 KB data JSON, disimpan efisien di PostgreSQL. Untuk pengguna aktif yang mencatat setiap hari selama 10 tahun (~3.650 entry), total data sekitar 3–4 MB. Sangat ringan untuk PostgreSQL.
 
 ---
 
 ## Chart Library: Recharts
 
-Tidak ada perubahan dari desain sebelumnya. Data chart di-supply dari `entries` di state hook, yang sudah di-fetch dari API.
+Data chart di-supply dari `entries` di state hook, yang sudah di-fetch dari API.
 
 ```typescript
 // Contoh implementasi TrendChart.tsx
@@ -1028,9 +949,9 @@ bmi = roundHalfUp(w / (h / 100)², 2)
 
 ---
 
-### Property 16: Measurement date uniqueness per user
+### Property 16: Measurement date uniqueness
 
-*For any* sequence of entry insertions — including an attempt to insert an entry with a `measurementDate` that already exists for the same `userId` — the database must never contain two rows with the same `(userId, measurementDate)` combination. This invariant is enforced at two levels: (1) application logic in the API route returns `400 DUPLICATE_DATE` before executing the insert, and (2) the database-level `UNIQUE (user_id, measurement_date)` constraint provides a final safety net. Note that two different users *may* have entries on the same date, since uniqueness is scoped per user.
+*For any* sequence of entry insertions — including an attempt to insert an entry with a `measurementDate` that already exists — the database must never contain two rows with the same `measurementDate`. This invariant is enforced at two levels: (1) application logic in the API route returns `400 DUPLICATE_DATE` before executing the insert, and (2) the database-level `UNIQUE (measurement_date)` constraint provides a final safety net.
 
 **Validates: Requirements 6.1**
 
@@ -1038,7 +959,7 @@ bmi = roundHalfUp(w / (h / 100)², 2)
 
 ### Property 17: API persistence round-trip
 
-*For any* valid entry payload sent via `POST /api/body-metrics`, a subsequent `GET /api/body-metrics` (authenticated as the same user) must return a list that includes an entry deeply equal to the saved payload — no field values are lost, mutated, or truncated through the API → Prisma → PostgreSQL → API round-trip.
+*For any* valid entry payload sent via `POST /api/body-metrics`, a subsequent `GET /api/body-metrics` must return a list that includes an entry deeply equal to the saved payload — no field values are lost, mutated, or truncated through the API → Prisma → PostgreSQL → API round-trip.
 
 **Validates: Requirements 6.2**
 
@@ -1062,8 +983,6 @@ bmi = roundHalfUp(w / (h / 100)², 2)
 | Validation error (server) | Zod server di API route | `400 Bad Request` | Toast error, form tetap terbuka |
 | Calculator geometry error | `abdomen ≤ neck` atau `waist + hip - neck ≤ 0` | — | Toast error, data tidak dikirim ke API |
 | Duplicate date | Unique constraint violation | `400 DUPLICATE_DATE` | Dialog pilihan: Update atau Batal |
-| Session expired / not found | `auth()` returns null | `401 Unauthorized` | Redirect otomatis ke `/auth/login` |
-| Forbidden (akses entry milik user lain) | Ownership check gagal di route handler | `403 Forbidden` | Toast error "Akses ditolak" |
 | Not found | Entry ID tidak ada di DB | `404 Not Found` | Toast error, list tidak berubah |
 | Database error | Prisma / PostgreSQL runtime error | `500 Internal Server Error` | Toast error "Terjadi kesalahan server", operasi dibatalkan, state dipertahankan |
 | Network error | `fetch()` gagal (timeout, offline) | — | Toast error "Gagal terhubung ke server", retry button |
@@ -1086,20 +1005,6 @@ interface Toast {
   duration?: number   // ms, default 3000 untuk sukses; undefined = persistent
 }
 ```
-
-### Auth Guard Pattern
-
-Setiap route handler mengikuti pola yang konsisten:
-
-```typescript
-const session = await auth()
-if (!session?.user?.id) {
-  return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 })
-}
-// Lanjutkan dengan session.user.id yang terjamin ada
-```
-
-Di sisi client, hook `useBodyMetrics` mendeteksi `401` dan meredirect ke halaman login, bukan mencoba retry.
 
 ---
 
@@ -1174,11 +1079,10 @@ describe('Calculator - Property Tests', () => {
 
 - `calculator.ts`: formula values, boundary inputs, error conditions
 - `validation.ts`: Zod schema — setiap field valid dan invalid
-- API routes: semua 4 endpoints — mock `auth()` dan `prisma` client
-  - Auth guard: 401 ketika no session
-  - Ownership: 403 ketika userId tidak cocok
+- API routes: semua 4 endpoints — mock `prisma` client
   - CRUD: create, read, update, delete dengan data valid
   - Duplicate date: return `400 DUPLICATE_DATE`
+  - Not found: return `404` untuk PATCH dan DELETE dengan ID tidak dikenal
 - `InputForm`: render fields sesuai gender, form submission, error display
 - `HistoryView`: sort order, pagination, delete confirmation dialog
 - `TrendChart`: filter by time range, empty state, single data point
@@ -1208,8 +1112,6 @@ Skenario integration test:
 - Submit form → POST ke API → entry muncul di chart dan history
 - Duplikasi tanggal → API return `DUPLICATE_DATE` → dialog konfirmasi muncul
 - Delete entry → DELETE ke API → entry hilang dari chart dan history
-- Session expired (`401`) → redirect ke login
-- Forbidden (`403`) → toast error "Akses ditolak"
 - Network error → toast error dengan retry
 
 ### Test Runner
@@ -1229,8 +1131,7 @@ Skenario integration test:
     "fast-check": "^3.x",
     "@testing-library/react": "^16.x",
     "@testing-library/user-event": "^14.x",
-    "msw": "^2.x",
-    "zod": "^3.x"
+    "msw": "^2.x"
   }
 }
 ```
