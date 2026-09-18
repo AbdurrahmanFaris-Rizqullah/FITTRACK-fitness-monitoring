@@ -40,4 +40,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-/.kiro
+/.kiro/
+/.claude/
+/.agents/
+/.windsurf/
+/src/generated/prisma
