@@ -19,8 +19,6 @@ model User {
   id_user       String    @id @default(uuid())
   username      String
   tanggal_lahir DateTime?
-  tb            Float?
-  bb            Float?
   kelamin       Kelamin?
   created_at    DateTime  @default(now())
   last_updated  DateTime  @updatedAt
@@ -31,12 +29,14 @@ model User {
 model BodyMetrics {
   id_bm            String   @id @default(uuid())
   user_id          String
+  tb               Float?
+  bb               Float?
   lingkar_leher    Float?
   lingkar_pinggang Float?
   lingkar_pinggul  Float?
   body_fat         Float?
   created_at       DateTime @default(now())
-  last_updated     DateTime  @updatedAt
+  last_updated     DateTime @updatedAt
 
   user  User @relation(fields: [user_id], references: [id_user])
 }
