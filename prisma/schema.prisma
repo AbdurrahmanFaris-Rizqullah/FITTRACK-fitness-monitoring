@@ -8,6 +8,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+
 }
 
 enum Kelamin {
@@ -15,6 +16,7 @@ enum Kelamin {
   WANITA
 }
 
+// Basic input — data profil user
 model User {
   id_user       String    @id @default(uuid())
   username      String
@@ -26,15 +28,26 @@ model User {
   body_metrics  BodyMetrics[]
 }
 
+// Advanced input — pengukuran harian body metrics
 model BodyMetrics {
   id_bm            String   @id @default(uuid())
   user_id          String
-  tb               Float?
-  bb               Float?
-  lingkar_leher    Float?
-  lingkar_pinggang Float?
-  lingkar_pinggul  Float?
-  body_fat         Float?
+
+  // Basic input harian
+  tb               Float?   // tinggi badan (cm)
+  bb               Float?   // berat badan (kg)
+
+  // Advanced input — US Navy method
+  lingkar_leher    Float?   // cm
+  lingkar_pinggang Float?   // cm (perut/pinggang)
+  lingkar_pinggul  Float?   // cm (wanita saja)
+
+  // Hasil kalkulasi US Navy (disimpan ke DB)
+  body_fat         Float?   // persentase lemak tubuh (%)
+
+  // Opsional
+  catatan          String?  // catatan ringkas
+
   created_at       DateTime @default(now())
   last_updated     DateTime @updatedAt
 
