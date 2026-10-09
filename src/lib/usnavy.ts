@@ -79,17 +79,17 @@ export function hitungUSNavy(input: USNavyInput): USNavyResult {
  */
 export function kategoriBodyFat(bodyFat: number, kelamin: KelaminInput): string {
   if (kelamin === "PRIA") {
-    if (bodyFat < 6)   return "Esensial";
-    if (bodyFat < 14)  return "Atlet";
-    if (bodyFat < 18)  return "Kebugaran";
-    if (bodyFat < 25)  return "Normal";
-    return "Obesitas";
+    if (bodyFat < 5)   return "Sangat Kurus";
+    if (bodyFat < 13)  return "Atlet";
+    if (bodyFat < 17)  return "Bugar";
+    if (bodyFat < 24  )  return "rata-rata";
+    return "Gemoy";
   }
 
   // WANITA
-  if (bodyFat < 14)  return "Esensial";
-  if (bodyFat < 21)  return "Atlet";
-  if (bodyFat < 25)  return "Kebugaran";
-  if (bodyFat < 32)  return "Normal";
-  return "Obesitas";
+  if (bodyFat < 13)  return "Sangat Kurus";
+  if (bodyFat < 20)  return "Atlet";
+  if (bodyFat < 24)  return "Bugar";
+  if (bodyFat < 31)  return "rata-rata";
+  return "Gemoy";
 }
