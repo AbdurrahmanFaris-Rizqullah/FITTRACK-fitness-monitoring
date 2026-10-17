@@ -67,12 +67,12 @@ function previewBodyFat(
 
 function kategoriColor(k: string) {
   switch (k) {
-    case "Atlet":       return { bg: "var(--blue-dim)",  color: "var(--blue)" };
-    case "Bugar":       return { bg: "var(--accent-dim)", color: "var(--accent)" };
-    case "Rata-rata":   return { bg: "var(--amber-dim)", color: "var(--amber)" };
-    case "Gemoy":       return { bg: "var(--red-dim)",   color: "var(--red)" };
-    case "Sangat Kurus":return { bg: "var(--red-dim)",   color: "var(--red)" };
-    default:            return { bg: "var(--surface-2)", color: "var(--txt-2)" };
+    case "Atlet":        return { bg: "var(--blue-dim)",   color: "var(--blue)" };
+    case "Bugar":        return { bg: "var(--accent-dim)", color: "var(--accent)" };
+    case "Rata-rata":    return { bg: "var(--amber-dim)",  color: "var(--amber)" };
+    case "Gemoy":        return { bg: "var(--red-dim)",    color: "var(--red)" };
+    case "Sangat Kurus": return { bg: "var(--red-dim)",    color: "var(--red)" };
+    default:             return { bg: "var(--surface-2)",  color: "var(--txt-2)" };
   }
 }
 
@@ -94,16 +94,23 @@ const EMPTY_FORM = {
 
 /* ─── component ──────────────────────────────────────────── */
 export default function BodyMetricsPage() {
-  const [users, setUsers]       = useState<User[]>([]);
-  const [records, setRecords]   = useState<BodyMetric[]>([]);
+  const [users, setUsers]             = useState<User[]>([]);
+  const [records, setRecords]         = useState<BodyMetric[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [loadingRecs, setLoadingRecs]   = useState(false);
-  const [error, setError]       = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [formErr, setFormErr]   = useState<string | null>(null);
-  const [submitOk, setSubmitOk] = useState<string | null>(null);
-  const [form, setForm]         = useState(EMPTY_FORM);
+  const [error, setError]             = useState<string | null>(null);
+  const [showForm, setShowForm]       = useState(false);
+  const [submitting, setSubmitting]   = useState(false);
+  const [formErr, setFormErr]         = useState<string | null>(null);
+  const [submitOk, setSubmitOk]       = useState<string | null>(null);
+  const [form, setForm]               = useState(EMPTY_FORM);
+
+  /**
+   * tbPrefill — the most recently recorded height for the selected user.
+   * Updated whenever records reload (user switches or new record saved).
+   * Only shown when form.tb is empty (user hasn't typed anything yet).
+   */
+  const [tbPrefill, setTbPrefill] = useState<number | null>(null);
 
   /* selected user's gender for live preview */
   const selectedUser = useMemo(
@@ -111,17 +118,25 @@ export default function BodyMetricsPage() {
     [users, form.user_id]
   );
 
-  /* live US Navy preview */
+  /**
+   * The effective tb value for the US Navy calculation:
+   * - If the user has typed something, use that.
+   * - If not, fall back to tbPrefill (the most recent recorded height).
+   */
+  const effectiveTb = form.tb !== "" ? parseFloat(form.tb) : (tbPrefill ?? NaN);
+
+  /* live US Navy preview — uses effectiveTb so prefill feeds the preview too */
   const preview = useMemo(
     () =>
       previewBodyFat(
         selectedUser?.kelamin ?? null,
-        parseFloat(form.tb),
+        effectiveTb,
         parseFloat(form.lingkar_leher),
         parseFloat(form.lingkar_pinggang),
         parseFloat(form.lingkar_pinggul)
       ),
-    [selectedUser, form.tb, form.lingkar_leher, form.lingkar_pinggang, form.lingkar_pinggul]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedUser, effectiveTb, form.lingkar_leher, form.lingkar_pinggang, form.lingkar_pinggul]
   );
 
   /* fetch users */
@@ -138,14 +153,29 @@ export default function BodyMetricsPage() {
     }
   }, []);
 
-  /* fetch records for selected user */
+  /**
+   * Fetch records for the given user.
+   * API returns newest-first (orderBy: created_at desc).
+   * records[0] is therefore the most recent entry.
+   * We extract tb from records[0] as the height prefill for that user.
+   */
   const fetchRecords = useCallback(async (uid: string) => {
-    if (!uid) { setRecords([]); return; }
+    if (!uid) {
+      setRecords([]);
+      setTbPrefill(null);
+      return;
+    }
     setLoadingRecs(true);
     try {
       const res = await fetch(`/api/body-metrics?user_id=${uid}`);
       const json = await res.json();
-      setRecords(json.data ?? []);
+      const data: BodyMetric[] = json.data ?? [];
+      setRecords(data);
+
+      // Seed height prefill from the most recent record that has a tb value.
+      // records[0] is newest-first from the API.
+      const latestWithTb = data.find((r) => r.tb != null);
+      setTbPrefill(latestWithTb?.tb ?? null);
     } catch {
       setError("Gagal memuat body metrics");
     } finally {
@@ -155,11 +185,23 @@ export default function BodyMetricsPage() {
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
-  /* when user_id changes in form, also refresh the records list */
+  /* When user_id changes: reset form fields (keep user_id), clear prefill
+     immediately, then load fresh records (which will set the new prefill). */
   useEffect(() => {
-    if (form.user_id) fetchRecords(form.user_id);
-    else setRecords([]);
-  }, [form.user_id, fetchRecords]);
+    if (form.user_id) {
+      // Reset form fields but keep user selection
+      setForm((p) => ({ ...EMPTY_FORM, user_id: p.user_id }));
+      setTbPrefill(null);
+      setSubmitOk(null);
+      setFormErr(null);
+      fetchRecords(form.user_id);
+    } else {
+      setRecords([]);
+      setTbPrefill(null);
+    }
+    // Only re-run when user_id changes, not when fetchRecords identity changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.user_id]);
 
   function setField(field: keyof typeof EMPTY_FORM, value: string) {
     setForm((p) => ({ ...p, [field]: value }));
@@ -170,14 +212,18 @@ export default function BodyMetricsPage() {
     setFormErr(null);
     setSubmitOk(null);
     if (!form.user_id) { setFormErr("Pilih user terlebih dahulu."); return; }
+
+    // Use the effective tb (prefill if user didn't override)
+    const tbToSend = form.tb !== "" ? parseFloat(form.tb) : tbPrefill;
+
     setSubmitting(true);
     try {
       const res = await fetch("/api/body-metrics", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: form.user_id,
-          tb:               form.tb               ? parseFloat(form.tb)               : null,
+          user_id:          form.user_id,
+          tb:               tbToSend ?? null,
           bb:               form.bb               ? parseFloat(form.bb)               : null,
           lingkar_leher:    form.lingkar_leher    ? parseFloat(form.lingkar_leher)    : null,
           lingkar_pinggang: form.lingkar_pinggang ? parseFloat(form.lingkar_pinggang) : null,
@@ -193,6 +239,7 @@ export default function BodyMetricsPage() {
           ? `✓ Tersimpan! Body fat: ${bf}% — ${json.kalkulasi.kategori}`
           : "✓ Tersimpan! (Data US Navy belum lengkap, body fat tidak dihitung)"
       );
+      // Reset fields but preserve user selection; reload records to update prefill
       setForm((p) => ({ ...EMPTY_FORM, user_id: p.user_id }));
       fetchRecords(form.user_id);
     } catch (e: unknown) {
@@ -203,6 +250,9 @@ export default function BodyMetricsPage() {
   }
 
   const kColor = preview ? kategoriColor(preview.kategori) : null;
+
+  /* Is the tb field currently showing the prefilled value (user hasn't typed)? */
+  const tbIsPrefilled = form.tb === "" && tbPrefill != null;
 
   return (
     <div className="noise-bg" style={{ minHeight: "100dvh", display: "flex", flexDirection: "column" }}>
@@ -235,7 +285,11 @@ export default function BodyMetricsPage() {
                   id="user-select"
                   className="input"
                   value={form.user_id}
-                  onChange={(e) => { setField("user_id", e.target.value); setSubmitOk(null); setFormErr(null); }}
+                  onChange={(e) => {
+                    setField("user_id", e.target.value);
+                    setSubmitOk(null);
+                    setFormErr(null);
+                  }}
                 >
                   <option value="" style={{ background: "var(--bg-3)" }}>— Pilih user —</option>
                   {users.map((u) => (
@@ -279,33 +333,65 @@ export default function BodyMetricsPage() {
                   {/* row 1 — basic */}
                   <p className="label" style={{ marginBottom: 12 }}>Dasar</p>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-                    {[
-                      { id: "tb",  label: "Tinggi Badan (cm)", field: "tb"  as const },
-                      { id: "bb",  label: "Berat Badan (kg)",  field: "bb"  as const },
-                    ].map(({ id, label, field }) => (
-                      <div key={id}>
-                        <label className="label" htmlFor={id}>{label}</label>
-                        <input
-                          id={id}
-                          className="input"
-                          type="number"
-                          step="0.1"
-                          min="0"
-                          placeholder="0.0"
-                          value={form[field]}
-                          onChange={(e) => setField(field, e.target.value)}
-                        />
+                    {/* Tinggi Badan — has prefill logic */}
+                    <div>
+                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+                        <label className="label" htmlFor="tb" style={{ margin: 0 }}>Tinggi Badan (cm)</label>
+                        {tbIsPrefilled && (
+                          <span style={{ fontSize: 10, color: "var(--txt-3)", letterSpacing: "0.04em" }}>
+                            dari riwayat
+                          </span>
+                        )}
                       </div>
-                    ))}
+                      <input
+                        id="tb"
+                        className="input"
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        placeholder="0.0"
+                        /*
+                         * When form.tb is empty AND we have a prefill, show the prefill
+                         * as the input value but styled as muted (placeholder-like).
+                         * Once the user types, form.tb is non-empty and overrides the prefill.
+                         */
+                        value={form.tb !== "" ? form.tb : (tbPrefill != null ? String(tbPrefill) : "")}
+                        onChange={(e) => setField("tb", e.target.value)}
+                        style={{
+                          opacity: tbIsPrefilled ? 0.55 : 1,
+                          transition: "opacity 0.2s",
+                        }}
+                      />
+                      {tbIsPrefilled && (
+                        <p style={{ fontSize: 10.5, color: "var(--txt-3)", marginTop: 4 }}>
+                          Diisi otomatis · ubah jika berbeda
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Berat Badan — unchanged */}
+                    <div>
+                      <label className="label" htmlFor="bb">Berat Badan (kg)</label>
+                      <input
+                        id="bb"
+                        className="input"
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        placeholder="0.0"
+                        value={form.bb}
+                        onChange={(e) => setField("bb", e.target.value)}
+                      />
+                    </div>
                   </div>
 
                   {/* row 2 — US Navy */}
                   <p className="label" style={{ marginBottom: 12 }}>US Navy Method (cm)</p>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
                     {[
-                      { id: "leher",    label: "Lingkar Leher",   field: "lingkar_leher"    as const },
-                      { id: "pinggang", label: "Lingkar Pinggang", field: "lingkar_pinggang" as const },
-                      { id: "pinggul",  label: "Lingkar Pinggul", field: "lingkar_pinggul"  as const },
+                      { id: "leher",    label: "Lingkar Leher",    field: "lingkar_leher"    as const },
+                      { id: "pinggang", label: "Lingkar Pinggang",  field: "lingkar_pinggang" as const },
+                      { id: "pinggul",  label: "Lingkar Pinggul",   field: "lingkar_pinggul"  as const },
                     ].map(({ id, label, field }) => (
                       <div key={id}>
                         <label className="label" htmlFor={id}>
@@ -351,7 +437,11 @@ export default function BodyMetricsPage() {
                     <button type="submit" className="btn btn-primary" disabled={submitting || !form.user_id}>
                       {submitting ? <><span className="spinner" /> Menyimpan…</> : "Simpan Metrics"}
                     </button>
-                    <button type="button" className="btn btn-ghost" onClick={() => { setShowForm(false); setFormErr(null); setSubmitOk(null); }}>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => { setShowForm(false); setFormErr(null); setSubmitOk(null); }}
+                    >
                       Batal
                     </button>
                   </div>
@@ -431,7 +521,7 @@ export default function BodyMetricsPage() {
               )}
             </div>
 
-            {/* History list */}
+            {/* History list — API returns newest-first, so display order is newest at top */}
             <div className="card animate-fade-up delay-3" style={{ padding: "20px 22px" }}>
               <p className="label" style={{ marginBottom: 14 }}>
                 Riwayat {form.user_id ? `· ${records.length} entri` : ""}
@@ -491,13 +581,13 @@ export default function BodyMetricsPage() {
                           )}
                         </div>
                         <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                          {r.bb   != null && <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>BB {r.bb} kg</span>}
-                          {r.tb   != null && <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>TB {r.tb} cm</span>}
+                          {r.bb  != null && <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>BB {r.bb} kg</span>}
+                          {r.tb  != null && <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>TB {r.tb} cm</span>}
                           {r.lingkar_pinggang != null && <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>↔ {r.lingkar_pinggang} cm</span>}
                         </div>
                         {r.catatan && (
                           <p style={{ fontSize: 11.5, color: "var(--txt-3)", marginTop: 4, fontStyle: "italic" }}>
-                            "{r.catatan}"
+                            &ldquo;{r.catatan}&rdquo;
                           </p>
                         )}
                       </div>

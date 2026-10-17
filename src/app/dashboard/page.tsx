@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
 import {
@@ -17,6 +17,8 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from "recharts";
+import type { ValueType, NameType } from "recharts/types/component/DefaultTooltipContent";
+import type { TooltipContentProps } from "recharts/types/component/Tooltip";
 
 /* ─── types ─────────────────────────────────────────────── */
 interface User {
@@ -39,6 +41,24 @@ interface BodyMetric {
   created_at: string;
 }
 
+/**
+ * Chart data point.
+ *
+ * We keep `id` (the record's UUID) as the Recharts data-key identity
+ * and `date` only as a human-readable display label.  This prevents
+ * Recharts from confusing two entries that share the same formatted
+ * date string (e.g. two logs on the same calendar day), which was the
+ * root cause of tooltips showing wrong values.
+ */
+interface ChartPoint {
+  id: string;        // unique key — used by XAxis dataKey
+  date: string;      // display label — shown via XAxis tickFormatter
+  bb: number | null;
+  body_fat: number | null;
+  pinggang: number | null;
+  leher: number | null;
+}
+
 /* ─── helpers ───────────────────────────────────────────── */
 function fmtShort(iso: string) {
   return new Date(iso).toLocaleDateString("id-ID", { day: "numeric", month: "short" });
@@ -49,15 +69,15 @@ function kategori(bf: number, kelamin: "PRIA" | "WANITA" | null) {
   if (kelamin === "PRIA") {
     if (bf < 5)  return { label: "Sangat Kurus", color: "var(--red)" };
     if (bf < 13) return { label: "Atlet",        color: "var(--blue)" };
-    if (bf < 17) return { label: "Bugar",         color: "var(--accent)" };
-    if (bf < 24) return { label: "Rata-rata",     color: "var(--amber)" };
-    return             { label: "Gemoy",          color: "var(--red)" };
+    if (bf < 17) return { label: "Bugar",        color: "var(--accent)" };
+    if (bf < 24) return { label: "Rata-rata",    color: "var(--amber)" };
+    return             { label: "Gemoy",         color: "var(--red)" };
   }
   if (bf < 13) return { label: "Sangat Kurus", color: "var(--red)" };
   if (bf < 20) return { label: "Atlet",        color: "var(--blue)" };
-  if (bf < 24) return { label: "Bugar",         color: "var(--accent)" };
-  if (bf < 31) return { label: "Rata-rata",     color: "var(--amber)" };
-  return           { label: "Gemoy",          color: "var(--red)" };
+  if (bf < 24) return { label: "Bugar",        color: "var(--accent)" };
+  if (bf < 31) return { label: "Rata-rata",    color: "var(--amber)" };
+  return           { label: "Gemoy",         color: "var(--red)" };
 }
 
 function delta(arr: (number | null)[]): { val: number; positive: boolean } | null {
@@ -68,12 +88,23 @@ function delta(arr: (number | null)[]): { val: number; positive: boolean } | nul
 }
 
 /* ─── custom tooltip ────────────────────────────────────── */
-function CustomTooltip({ active, payload, label }: {
-  active?: boolean;
-  payload?: { value: number; name: string; color: string }[];
-  label?: string;
-}) {
+/**
+ * Recharts passes `label` as the raw XAxis dataKey value for the hovered
+ * point — which is now the UUID `id`.  We look it up in chartData to
+ * resolve the human-readable date for display.
+ *
+ * We use TooltipContentProps (the exact type Recharts passes to content=)
+ * and add our own chartData prop on top.
+ */
+type CustomTooltipProps = TooltipContentProps<ValueType, NameType> & {
+  chartData: ChartPoint[];
+};
+
+function CustomTooltip({ active, payload, label, chartData }: CustomTooltipProps) {
   if (!active || !payload?.length) return null;
+
+  const displayDate = chartData.find((p) => p.id === String(label))?.date ?? String(label ?? "");
+
   return (
     <div
       style={{
@@ -87,10 +118,11 @@ function CustomTooltip({ active, payload, label }: {
         minWidth: 120,
       }}
     >
-      <p style={{ color: "var(--txt-3)", marginBottom: 6, fontSize: 11 }}>{label}</p>
-      {payload.map((p) => (
-        <p key={p.name} style={{ color: p.color, fontWeight: 600 }}>
-          {p.value} <span style={{ color: "var(--txt-3)", fontWeight: 400 }}>{p.name}</span>
+      <p style={{ color: "var(--txt-3)", marginBottom: 6, fontSize: 11 }}>{displayDate}</p>
+      {payload.map((p, i) => (
+        <p key={`${String(p.name)}-${i}`} style={{ color: p.color ?? "var(--txt)", fontWeight: 600 }}>
+          {String(p.value)}{" "}
+          <span style={{ color: "var(--txt-3)", fontWeight: 400 }}>{String(p.name)}</span>
         </p>
       ))}
     </div>
@@ -152,14 +184,65 @@ function DashboardInner() {
   const searchParams = useSearchParams();
   const urlUserId    = searchParams.get("user_id") ?? "";
 
-  const [users, setUsers]     = useState<User[]>([]);
-  const [records, setRecords] = useState<BodyMetric[]>([]);
-  const [userId, setUserId]   = useState(urlUserId);
+  const [users, setUsers]       = useState<User[]>([]);
+  const [records, setRecords]   = useState<BodyMetric[]>([]);
+  const [userId, setUserId]     = useState(urlUserId);
   const [loadingU, setLoadingU] = useState(true);
   const [loadingR, setLoadingR] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
+  const [error, setError]       = useState<string | null>(null);
 
-  /* fetch users */
+  /**
+   * Ref that tracks which userId we most recently requested records for.
+   * This lets us discard stale responses when the user switches quickly —
+   * preventing an older fetch for user A from overwriting fresh data for user B.
+   */
+  const requestedUserIdRef = useRef<string>("");
+
+  /* ── fetch records ──────────────────────────────────────
+   *
+   * Bug 3 fix: accept the target userId as a parameter instead of reading
+   * from state inside the callback.  This ensures the fetch always uses the
+   * uid that was current when the call was made, not a stale closure value.
+   */
+  const fetchRecords = useCallback(async (uid: string) => {
+    if (!uid) { setRecords([]); return; }
+
+    // Mark this as the most recent request
+    requestedUserIdRef.current = uid;
+
+    setLoadingR(true);
+    setError(null);
+    try {
+      const res  = await fetch(`/api/body-metrics?user_id=${uid}`);
+      const json = await res.json();
+
+      // Discard if a newer request has already been made
+      if (requestedUserIdRef.current !== uid) return;
+
+      // API returns newest-first (orderBy: created_at desc).
+      // Reverse to oldest-first so charts read left-to-right chronologically.
+      setRecords([...(json.data ?? [])].reverse());
+    } catch {
+      if (requestedUserIdRef.current === uid) {
+        setError("Gagal memuat body metrics");
+      }
+    } finally {
+      if (requestedUserIdRef.current === uid) {
+        setLoadingR(false);
+      }
+    }
+  }, []);
+
+  /* ── fetch users (runs once on mount) ───────────────────
+   *
+   * Bug 3 fix: do NOT use urlUserId as a dependency — that causes this
+   * effect to re-run every time the URL changes (i.e. every user switch),
+   * which can overwrite userId with list[0] mid-navigation.
+   *
+   * Instead: run once, determine the initial userId from the URL param
+   * (already in component state via useState(urlUserId)), and only fall
+   * back to list[0] when the initial state is still empty.
+   */
   useEffect(() => {
     (async () => {
       setLoadingU(true);
@@ -168,67 +251,97 @@ function DashboardInner() {
         const json = await res.json();
         const list: User[] = json.data ?? [];
         setUsers(list);
-        // if no url param, default to first user
-        if (!urlUserId && list.length > 0) setUserId(list[0].id_user);
+
+        // Only auto-select first user if no user is already selected
+        // (either from URL param on mount, or a prior switchUser call)
+        setUserId((current) => {
+          if (!current && list.length > 0) return list[0].id_user;
+          return current;
+        });
       } catch {
         setError("Gagal memuat users");
       } finally {
         setLoadingU(false);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally empty — runs exactly once on mount
+
+  /* ── sync URL param → state (for back/forward navigation) ─
+   *
+   * We keep this so that browser back/forward button changes
+   * (which update urlUserId without re-mounting) still work.
+   * This does NOT run on the initial mount because urlUserId
+   * is already captured by useState(urlUserId).
+   */
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    if (urlUserId) setUserId(urlUserId);
   }, [urlUserId]);
 
-  /* fetch records when userId changes */
-  const fetchRecords = useCallback(async (uid: string) => {
-    if (!uid) { setRecords([]); return; }
-    setLoadingR(true);
-    setError(null);
-    try {
-      const res  = await fetch(`/api/body-metrics?user_id=${uid}`);
-      const json = await res.json();
-      // records come newest-first from API, reverse for charts
-      setRecords([...(json.data ?? [])].reverse());
-    } catch {
-      setError("Gagal memuat body metrics");
-    } finally {
-      setLoadingR(false);
-    }
-  }, []);
+  /* ── fetch records whenever userId changes ─────────────── */
+  useEffect(() => {
+    fetchRecords(userId);
+  }, [userId, fetchRecords]);
 
-  useEffect(() => { fetchRecords(userId); }, [userId, fetchRecords]);
-
-  /* sync url param → local state */
-  useEffect(() => { if (urlUserId) setUserId(urlUserId); }, [urlUserId]);
-
+  /* ── switch user (button click) ────────────────────────── */
   function switchUser(uid: string) {
+    // Update state first so the UI responds immediately,
+    // then update the URL (which is secondary / shareable link only).
     setUserId(uid);
     router.replace(`/dashboard?user_id=${uid}`, { scroll: false });
   }
 
-  const selectedUser = useMemo(() => users.find((u) => u.id_user === userId) ?? null, [users, userId]);
+  const selectedUser = useMemo(
+    () => users.find((u) => u.id_user === userId) ?? null,
+    [users, userId]
+  );
 
-  /* chart data */
-  const chartData = useMemo(
+  /* ── chart data ─────────────────────────────────────────
+   *
+   * Bug 2 fix: use the record's unique id_bm as the Recharts dataKey
+   * instead of the formatted date string.  Two records logged on the
+   * same calendar day produce the same fmtShort() string, which caused
+   * Recharts to associate hover events with the wrong data point and
+   * display incorrect tooltip values.
+   *
+   * XAxis will show the human-readable date via tickFormatter; the
+   * CustomTooltip resolves the display date via a lookup by id.
+   */
+  const chartData = useMemo<ChartPoint[]>(
     () =>
       records.map((r) => ({
-        date:      fmtShort(r.created_at),
-        bb:        r.bb,
-        body_fat:  r.body_fat,
-        pinggang:  r.lingkar_pinggang,
-        leher:     r.lingkar_leher,
+        id:       r.id_bm,
+        date:     fmtShort(r.created_at),
+        bb:       r.bb,
+        body_fat: r.body_fat,
+        pinggang: r.lingkar_pinggang,
+        leher:    r.lingkar_leher,
       })),
     [records]
   );
 
-  /* latest record stats */
-  const latest = records[records.length - 1] ?? null;
+  /* latest record = last element after oldest-first sort */
+  const latest    = records[records.length - 1] ?? null;
   const latestKat =
     latest?.body_fat != null
       ? kategori(latest.body_fat, selectedUser?.kelamin ?? null)
       : null;
 
-  const bfDelta  = delta(records.map((r) => r.body_fat));
-  const bbDelta  = delta(records.map((r) => r.bb));
+  const bfDelta = delta(records.map((r) => r.body_fat));
+  const bbDelta = delta(records.map((r) => r.bb));
+
+  /* shared tooltip renderer — needs chartData in scope */
+  const renderTooltip = useCallback(
+    (props: TooltipContentProps<ValueType, NameType>) => (
+      <CustomTooltip {...props} chartData={chartData} />
+    ),
+    [chartData]
+  );
 
   /* ── render ─────────────────────────────────────────────── */
   return (
@@ -452,9 +565,16 @@ function DashboardInner() {
                           </linearGradient>
                         </defs>
                         <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="date" tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} />
+                        {/* dataKey="id" uses the UUID as the unique point identity */}
+                        <XAxis
+                          dataKey="id"
+                          tickFormatter={(id) => chartData.find((p) => p.id === id)?.date ?? ""}
+                          tick={{ fill: "var(--txt-3)", fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
                         <YAxis tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
-                        <Tooltip content={<CustomTooltip />} />
+                        <Tooltip content={renderTooltip} />
                         <Area
                           type="monotone"
                           dataKey="body_fat"
@@ -482,9 +602,15 @@ function DashboardInner() {
                       <ResponsiveContainer width="100%" height={160}>
                         <LineChart data={chartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
                           <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="date" tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <XAxis
+                            dataKey="id"
+                            tickFormatter={(id) => chartData.find((p) => p.id === id)?.date ?? ""}
+                            tick={{ fill: "var(--txt-3)", fontSize: 10 }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
                           <YAxis tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
-                          <Tooltip content={<CustomTooltip />} />
+                          <Tooltip content={renderTooltip} />
                           <Line
                             type="monotone"
                             dataKey="bb"
@@ -508,12 +634,24 @@ function DashboardInner() {
                       <ResponsiveContainer width="100%" height={160}>
                         <BarChart data={chartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
                           <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="date" tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <XAxis
+                            dataKey="id"
+                            tickFormatter={(id) => chartData.find((p) => p.id === id)?.date ?? ""}
+                            tick={{ fill: "var(--txt-3)", fontSize: 10 }}
+                            axisLine={false}
+                            tickLine={false}
+                          />
                           <YAxis tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
-                          <Tooltip content={<CustomTooltip />} />
+                          <Tooltip content={renderTooltip} />
                           <Bar dataKey="pinggang" name="cm" fill="var(--amber)" radius={[4, 4, 0, 0]} opacity={0.85} />
                           {selectedUser.kelamin === "PRIA" && (
-                            <ReferenceLine y={94} stroke="var(--red)" strokeDasharray="4 3" strokeWidth={1.5} label={{ value: "Batas risiko", fill: "var(--red)", fontSize: 9 }} />
+                            <ReferenceLine
+                              y={94}
+                              stroke="var(--red)"
+                              strokeDasharray="4 3"
+                              strokeWidth={1.5}
+                              label={{ value: "Batas risiko", fill: "var(--red)", fontSize: 9 }}
+                            />
                           )}
                         </BarChart>
                       </ResponsiveContainer>
@@ -530,9 +668,15 @@ function DashboardInner() {
                     <ResponsiveContainer width="100%" height={140}>
                       <LineChart data={chartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
                         <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="date" tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} />
+                        <XAxis
+                          dataKey="id"
+                          tickFormatter={(id) => chartData.find((p) => p.id === id)?.date ?? ""}
+                          tick={{ fill: "var(--txt-3)", fontSize: 10 }}
+                          axisLine={false}
+                          tickLine={false}
+                        />
                         <YAxis tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
-                        <Tooltip content={<CustomTooltip />} />
+                        <Tooltip content={renderTooltip} />
                         <Line
                           type="monotone"
                           dataKey="leher"
@@ -550,7 +694,7 @@ function DashboardInner() {
               </div>
             )}
 
-            {/* single entry — show a nudge to log more */}
+            {/* single entry nudge */}
             {records.length === 1 && (
               <div
                 className="card animate-fade-in"
