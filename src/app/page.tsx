@@ -252,7 +252,7 @@ export default function HomePage() {
             FITTRACK
           </span>
           <span style={{ fontSize: 12, color: "var(--txt-3)" }}>
-            US Navy Body Fat Method · ACE Categories
+            US Navy Body Fat Method · ACE Categories 
           </span>
         </div>
       </footer>

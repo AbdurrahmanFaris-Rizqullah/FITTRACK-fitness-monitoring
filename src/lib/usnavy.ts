@@ -43,17 +43,14 @@ export function hitungUSNavy(input: USNavyInput): USNavyResult {
       return { body_fat: 0, valid: false, error: "lingkar_pinggul wajib diisi untuk wanita" };
     }
 
+  // WANITA
     const arg = lingkar_pinggang + lingkar_pinggul - lingkar_leher;
     if (arg <= 0) {
       return { body_fat: 0, valid: false, error: "Nilai (pinggang + pinggul - leher) harus lebih dari 0" };
     }
 
     const bodyFat =
-      495 /
-        (1.29579 -
-          0.35004 * Math.log10(arg) +
-          0.221 * Math.log10(tb)) -
-      450;
+      495 / (1.29579 - 0.35004 * Math.log10(arg) + 0.221 * Math.log10(tb)) - 450;
 
     return { body_fat: parseFloat(bodyFat.toFixed(2)), valid: true };
   }
@@ -65,11 +62,7 @@ export function hitungUSNavy(input: USNavyInput): USNavyResult {
   }
 
   const bodyFat =
-    495 /
-      (1.0324 -
-        0.19077 * Math.log10(arg) +
-        0.15456 * Math.log10(tb)) -
-    450;
+    495 / (1.0324 - 0.19077 * Math.log10(arg) + 0.15456 * Math.log10(tb)) -  450;
 
   return { body_fat: parseFloat(bodyFat.toFixed(2)), valid: true };
 }

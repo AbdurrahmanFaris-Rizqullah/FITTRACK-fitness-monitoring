@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 const NAV_LINKS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/users",     label: "Users" },
-  { href: "/body-metrics", label: "Body Metrics" },
+  { href: "/body-metrics", label: "Body Fat" },
 ];
 
 export default function Navbar() {

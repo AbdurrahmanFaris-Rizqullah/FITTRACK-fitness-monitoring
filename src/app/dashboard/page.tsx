@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Navbar from "../components/Navbar";
+import BodyDiagram from "../components/BodyDiagram";
 import {
   LineChart,
   Line,
@@ -43,16 +44,12 @@ interface BodyMetric {
 
 /**
  * Chart data point.
- *
- * We keep `id` (the record's UUID) as the Recharts data-key identity
- * and `date` only as a human-readable display label.  This prevents
- * Recharts from confusing two entries that share the same formatted
- * date string (e.g. two logs on the same calendar day), which was the
- * root cause of tooltips showing wrong values.
+ * `id` = UUID used as Recharts XAxis dataKey (prevents same-day collision).
+ * `date` = human-readable display label resolved via tickFormatter / tooltip.
  */
 interface ChartPoint {
-  id: string;        // unique key — used by XAxis dataKey
-  date: string;      // display label — shown via XAxis tickFormatter
+  id: string;
+  date: string;
   bb: number | null;
   body_fat: number | null;
   pinggang: number | null;
@@ -87,14 +84,9 @@ function delta(arr: (number | null)[]): { val: number; positive: boolean } | nul
   return { val: d, positive: d >= 0 };
 }
 
-/* ─── custom tooltip ────────────────────────────────────── */
-/**
- * Recharts passes `label` as the raw XAxis dataKey value for the hovered
- * point — which is now the UUID `id`.  We look it up in chartData to
- * resolve the human-readable date for display.
- *
- * We use TooltipContentProps (the exact type Recharts passes to content=)
- * and add our own chartData prop on top.
+/* ─── custom tooltip ─────────────────────────────────────
+ * Recharts passes the UUID as `label` — we resolve it back
+ * to the human-readable date via a chartData lookup.
  */
 type CustomTooltipProps = TooltipContentProps<ValueType, NameType> & {
   chartData: ChartPoint[];
@@ -102,9 +94,8 @@ type CustomTooltipProps = TooltipContentProps<ValueType, NameType> & {
 
 function CustomTooltip({ active, payload, label, chartData }: CustomTooltipProps) {
   if (!active || !payload?.length) return null;
-
-  const displayDate = chartData.find((p) => p.id === String(label))?.date ?? String(label ?? "");
-
+  const displayDate =
+    chartData.find((p) => p.id === String(label))?.date ?? String(label ?? "");
   return (
     <div
       style={{
@@ -118,13 +109,54 @@ function CustomTooltip({ active, payload, label, chartData }: CustomTooltipProps
         minWidth: 120,
       }}
     >
-      <p style={{ color: "var(--txt-3)", marginBottom: 6, fontSize: 11 }}>{displayDate}</p>
+      <p style={{ color: "var(--txt-2)", marginBottom: 6, fontSize: 11 }}>{displayDate}</p>
       {payload.map((p, i) => (
         <p key={`${String(p.name)}-${i}`} style={{ color: p.color ?? "var(--txt)", fontWeight: 600 }}>
           {String(p.value)}{" "}
-          <span style={{ color: "var(--txt-3)", fontWeight: 400 }}>{String(p.name)}</span>
+          <span style={{ color: "var(--txt-2)", fontWeight: 400 }}>{String(p.name)}</span>
         </p>
       ))}
+    </div>
+  );
+}
+
+/* ─── shared XAxis props ─────────────────────────────────
+ * minTickGap: prevents label crowding when many records share
+ *   nearby dates (e.g. logging daily). Recharts will drop ticks
+ *   that would render closer than minTickGap px apart.
+ * interval="preserveStartEnd": always shows first + last label.
+ */
+function makeXAxisProps(chartData: ChartPoint[]) {
+  return {
+    dataKey: "id",
+    tickFormatter: (id: string) =>
+      chartData.find((p) => p.id === id)?.date ?? "",
+    tick: { fill: "var(--txt-3)", fontSize: 10 },
+    axisLine: false,
+    tickLine: false,
+    interval: "preserveStartEnd" as const,
+    minTickGap: 40,
+  };
+}
+
+/* ─── skeleton components ────────────────────────────────
+ * Shown while records are loading so there is no layout jump.
+ */
+function SkeletonStatCard() {
+  return (
+    <div className="skeleton-stat-card">
+      <div className="skeleton" style={{ height: 11, width: "55%", borderRadius: 4 }} />
+      <div className="skeleton" style={{ height: 44, width: "70%", borderRadius: 6 }} />
+      <div className="skeleton" style={{ height: 11, width: "45%", borderRadius: 4 }} />
+    </div>
+  );
+}
+
+function SkeletonChartCard({ height = 160 }: { height?: number }) {
+  return (
+    <div className="skeleton-chart-card">
+      <div className="skeleton" style={{ height: 11, width: "40%", borderRadius: 4, marginBottom: 18 }} />
+      <div className="skeleton" style={{ height, borderRadius: "var(--r-md)" }} />
     </div>
   );
 }
@@ -152,17 +184,21 @@ function StatCard({
       className={`stat-card animate-fade-up${delay ? ` delay-${delay}` : ""}`}
       style={{ minWidth: 0 }}
     >
+      {/* label — uses --txt-3 which is now WCAG AA compliant */}
       <div className="stat-card-label">{label}</div>
+
       <div className="stat-card-value" style={{ color: color ?? "var(--txt)", marginTop: 8 }}>
         {value ?? "—"}
         {unit && value != null && (
           <span style={{ fontSize: "1.1rem", color: "var(--txt-2)", marginLeft: 4 }}>{unit}</span>
         )}
       </div>
+
+      {/* delta trend — positive = went up = bad (body fat / weight) */}
       {d != null && (
         <div
           style={{
-            fontSize: 11.5,
+            fontSize: 12,
             marginTop: 6,
             color: d.positive ? "var(--red)" : "var(--green)",
             fontWeight: 600,
@@ -171,14 +207,85 @@ function StatCard({
           {d.positive ? "▲" : "▼"} {Math.abs(d.val)}{unit} sejak awal
         </div>
       )}
+
+      {/* sub-label — lifted to --txt-2 for WCAG AA contrast */}
       {sub && !d && (
-        <div style={{ fontSize: 11.5, marginTop: 6, color: "var(--txt-3)" }}>{sub}</div>
+        <div style={{ fontSize: 12, marginTop: 6, color: "var(--txt-2)" }}>{sub}</div>
       )}
     </div>
   );
 }
 
-/* ─── main component (inner — uses searchParams) ─────────── */
+/* ─── empty state ────────────────────────────────────────── */
+function EmptyState({ username }: { username: string }) {
+  return (
+    <div
+      className="card animate-fade-in"
+      style={{
+        padding: "48px 32px",
+        textAlign: "center",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 12,
+        border: "1px solid var(--border-2)",
+      }}
+    >
+      {/* icon ring */}
+      <div
+        style={{
+          width: 72,
+          height: 72,
+          borderRadius: "50%",
+          background: "var(--accent-dim)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: 32,
+          marginBottom: 4,
+        }}
+      >
+        📋
+      </div>
+
+      <p style={{ fontSize: 15, fontWeight: 700, color: "var(--txt)", margin: 0 }}>
+        Belum ada data untuk <span style={{ color: "var(--accent)" }}>{username}</span>
+      </p>
+      <p style={{ fontSize: 13, color: "var(--txt-2)", margin: 0, maxWidth: 300, lineHeight: 1.6 }}>
+        Log pengukuran pertama untuk mulai melihat grafik tren dan diagram tubuh.
+      </p>
+
+      <a
+        href="/body-metrics"
+        className="btn btn-primary"
+        style={{ marginTop: 8, padding: "10px 24px", fontSize: 13.5 }}
+      >
+        + Log Metrics Pertama
+      </a>
+    </div>
+  );
+}
+
+/* ─── chart section label ────────────────────────────────── */
+function ChartLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p
+      style={{
+        fontSize: 12,
+        fontWeight: 700,
+        letterSpacing: "0.08em",
+        textTransform: "uppercase",
+        color: "var(--txt-2)",   /* lifted from --txt-3 for WCAG AA */
+        marginBottom: 16,
+        margin: "0 0 16px",
+      }}
+    >
+      {children}
+    </p>
+  );
+}
+
+/* ─── DashboardInner ─────────────────────────────────────── */
 function DashboardInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
@@ -191,58 +298,27 @@ function DashboardInner() {
   const [loadingR, setLoadingR] = useState(false);
   const [error, setError]       = useState<string | null>(null);
 
-  /**
-   * Ref that tracks which userId we most recently requested records for.
-   * This lets us discard stale responses when the user switches quickly —
-   * preventing an older fetch for user A from overwriting fresh data for user B.
-   */
   const requestedUserIdRef = useRef<string>("");
 
-  /* ── fetch records ──────────────────────────────────────
-   *
-   * Bug 3 fix: accept the target userId as a parameter instead of reading
-   * from state inside the callback.  This ensures the fetch always uses the
-   * uid that was current when the call was made, not a stale closure value.
-   */
+  /* ── fetch records ────────────────────────────────────── */
   const fetchRecords = useCallback(async (uid: string) => {
     if (!uid) { setRecords([]); return; }
-
-    // Mark this as the most recent request
     requestedUserIdRef.current = uid;
-
     setLoadingR(true);
     setError(null);
     try {
       const res  = await fetch(`/api/body-metrics?user_id=${uid}`);
       const json = await res.json();
-
-      // Discard if a newer request has already been made
       if (requestedUserIdRef.current !== uid) return;
-
-      // API returns newest-first (orderBy: created_at desc).
-      // Reverse to oldest-first so charts read left-to-right chronologically.
-      setRecords([...(json.data ?? [])].reverse());
+      setRecords([...(json.data ?? [])].reverse()); // oldest-first for charts
     } catch {
-      if (requestedUserIdRef.current === uid) {
-        setError("Gagal memuat body metrics");
-      }
+      if (requestedUserIdRef.current === uid) setError("Gagal memuat body metrics");
     } finally {
-      if (requestedUserIdRef.current === uid) {
-        setLoadingR(false);
-      }
+      if (requestedUserIdRef.current === uid) setLoadingR(false);
     }
   }, []);
 
-  /* ── fetch users (runs once on mount) ───────────────────
-   *
-   * Bug 3 fix: do NOT use urlUserId as a dependency — that causes this
-   * effect to re-run every time the URL changes (i.e. every user switch),
-   * which can overwrite userId with list[0] mid-navigation.
-   *
-   * Instead: run once, determine the initial userId from the URL param
-   * (already in component state via useState(urlUserId)), and only fall
-   * back to list[0] when the initial state is still empty.
-   */
+  /* ── fetch users (once on mount) ─────────────────────── */
   useEffect(() => {
     (async () => {
       setLoadingU(true);
@@ -251,13 +327,7 @@ function DashboardInner() {
         const json = await res.json();
         const list: User[] = json.data ?? [];
         setUsers(list);
-
-        // Only auto-select first user if no user is already selected
-        // (either from URL param on mount, or a prior switchUser call)
-        setUserId((current) => {
-          if (!current && list.length > 0) return list[0].id_user;
-          return current;
-        });
+        setUserId((cur) => (!cur && list.length > 0 ? list[0].id_user : cur));
       } catch {
         setError("Gagal memuat users");
       } finally {
@@ -265,33 +335,18 @@ function DashboardInner() {
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // intentionally empty — runs exactly once on mount
+  }, []);
 
-  /* ── sync URL param → state (for back/forward navigation) ─
-   *
-   * We keep this so that browser back/forward button changes
-   * (which update urlUserId without re-mounting) still work.
-   * This does NOT run on the initial mount because urlUserId
-   * is already captured by useState(urlUserId).
-   */
+  /* ── sync URL → state for back/forward navigation ───── */
   const isFirstRender = useRef(true);
   useEffect(() => {
-    if (isFirstRender.current) {
-      isFirstRender.current = false;
-      return;
-    }
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
     if (urlUserId) setUserId(urlUserId);
   }, [urlUserId]);
 
-  /* ── fetch records whenever userId changes ─────────────── */
-  useEffect(() => {
-    fetchRecords(userId);
-  }, [userId, fetchRecords]);
+  useEffect(() => { fetchRecords(userId); }, [userId, fetchRecords]);
 
-  /* ── switch user (button click) ────────────────────────── */
   function switchUser(uid: string) {
-    // Update state first so the UI responds immediately,
-    // then update the URL (which is secondary / shareable link only).
     setUserId(uid);
     router.replace(`/dashboard?user_id=${uid}`, { scroll: false });
   }
@@ -301,17 +356,7 @@ function DashboardInner() {
     [users, userId]
   );
 
-  /* ── chart data ─────────────────────────────────────────
-   *
-   * Bug 2 fix: use the record's unique id_bm as the Recharts dataKey
-   * instead of the formatted date string.  Two records logged on the
-   * same calendar day produce the same fmtShort() string, which caused
-   * Recharts to associate hover events with the wrong data point and
-   * display incorrect tooltip values.
-   *
-   * XAxis will show the human-readable date via tickFormatter; the
-   * CustomTooltip resolves the display date via a lookup by id.
-   */
+  /* ── chart data (UUID key, date display label) ────────── */
   const chartData = useMemo<ChartPoint[]>(
     () =>
       records.map((r) => ({
@@ -325,17 +370,15 @@ function DashboardInner() {
     [records]
   );
 
-  /* latest record = last element after oldest-first sort */
   const latest    = records[records.length - 1] ?? null;
-  const latestKat =
-    latest?.body_fat != null
-      ? kategori(latest.body_fat, selectedUser?.kelamin ?? null)
-      : null;
+  const latestKat = latest?.body_fat != null
+    ? kategori(latest.body_fat, selectedUser?.kelamin ?? null)
+    : null;
+  const bfDelta   = delta(records.map((r) => r.body_fat));
+  const bbDelta   = delta(records.map((r) => r.bb));
 
-  const bfDelta = delta(records.map((r) => r.body_fat));
-  const bbDelta = delta(records.map((r) => r.bb));
+  const xAxisProps = useMemo(() => makeXAxisProps(chartData), [chartData]);
 
-  /* shared tooltip renderer — needs chartData in scope */
   const renderTooltip = useCallback(
     (props: TooltipContentProps<ValueType, NameType>) => (
       <CustomTooltip {...props} chartData={chartData} />
@@ -343,26 +386,53 @@ function DashboardInner() {
     [chartData]
   );
 
-  /* ── render ─────────────────────────────────────────────── */
+  /* ── Y-axis shared style ─────────────────────────────── */
+  const yAxisStyle = {
+    tick: { fill: "var(--txt-3)", fontSize: 10 },
+    axisLine: false,
+    tickLine: false,
+    domain: ["auto", "auto"] as ["auto", "auto"],
+  };
+
+  /* ── render ──────────────────────────────────────────── */
   return (
-    <div className="noise-bg" style={{ minHeight: "100dvh", display: "flex", flexDirection: "column" }}>
+    <div
+      className="noise-bg"
+      style={{ minHeight: "100dvh", display: "flex", flexDirection: "column" }}
+    >
       <Navbar />
 
-      <main style={{ flex: 1, maxWidth: 1120, margin: "0 auto", padding: "40px 24px 60px", width: "100%" }}>
-
+      <main
+        style={{
+          flex: 1,
+          maxWidth: 1120,
+          margin: "0 auto",
+          padding: "40px 24px 60px",
+          width: "100%",
+        }}
+      >
         {/* ── Page header ── */}
         <div
           className="animate-fade-up"
-          style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 28, flexWrap: "wrap", gap: 16 }}
+          style={{
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "space-between",
+            marginBottom: 28,
+            flexWrap: "wrap",
+            gap: 16,
+          }}
         >
           <div>
             <p className="label" style={{ marginBottom: 6 }}>Overview</p>
-            <h1 className="display" style={{ fontSize: "clamp(2.4rem, 4vw, 3.5rem)", color: "var(--txt)" }}>
+            <h1
+              className="display"
+              style={{ fontSize: "clamp(2.4rem, 4vw, 3.5rem)", color: "var(--txt)" }}
+            >
               Dashboard
             </h1>
           </div>
 
-          {/* User switcher */}
           {loadingU ? (
             <span className="spinner" />
           ) : (
@@ -390,6 +460,7 @@ function DashboardInner() {
           )}
         </div>
 
+        {/* ── Error banner ── */}
         {error && (
           <div
             style={{
@@ -406,7 +477,7 @@ function DashboardInner() {
           </div>
         )}
 
-        {/* ── No user ── */}
+        {/* ── No users ── */}
         {!loadingU && users.length === 0 && (
           <div className="card" style={{ padding: "60px 24px", textAlign: "center" }}>
             <div style={{ fontSize: 36, marginBottom: 12 }}>👤</div>
@@ -417,11 +488,31 @@ function DashboardInner() {
           </div>
         )}
 
-        {/* ── Loading records ── */}
+        {/* ── Skeleton loaders while records fetch ── */}
         {loadingR && (
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "48px 0", justifyContent: "center" }}>
-            <span className="spinner" style={{ width: 24, height: 24, borderWidth: 2.5 }} />
-            <span style={{ color: "var(--txt-2)", fontSize: 14 }}>Memuat data…</span>
+          <div className="animate-fade-in">
+            {/* stat card skeletons */}
+            <div className="stat-grid" style={{ marginBottom: 28 }}>
+              {[0, 1, 2, 3].map((i) => <SkeletonStatCard key={i} />)}
+            </div>
+
+            {/* diagram + chart row skeleton */}
+            <div className="diagram-row" style={{ marginBottom: 24 }}>
+              <div className="diagram-col">
+                <div
+                  className="skeleton"
+                  style={{ height: 420, borderRadius: "var(--r-lg)" }}
+                />
+              </div>
+              <SkeletonChartCard height={200} />
+            </div>
+
+            {/* bottom charts skeleton */}
+            <div className="chart-grid">
+              <SkeletonChartCard height={160} />
+              <SkeletonChartCard height={160} />
+              <SkeletonChartCard height={140} />
+            </div>
           </div>
         )}
 
@@ -435,7 +526,7 @@ function DashboardInner() {
                 display: "flex",
                 alignItems: "center",
                 gap: 12,
-                marginBottom: 28,
+                marginBottom: 24,
                 padding: "14px 18px",
                 background: "var(--surface)",
                 border: "1px solid var(--border)",
@@ -448,7 +539,10 @@ function DashboardInner() {
                   width: 40,
                   height: 40,
                   borderRadius: "50%",
-                  background: selectedUser.kelamin === "WANITA" ? "var(--accent-dim)" : "var(--blue-dim)",
+                  background:
+                    selectedUser.kelamin === "WANITA"
+                      ? "var(--accent-dim)"
+                      : "var(--blue-dim)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -459,11 +553,20 @@ function DashboardInner() {
                 {selectedUser.kelamin === "WANITA" ? "🧘‍♀️" : "💪"}
               </div>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: "var(--txt)" }}>{selectedUser.username}</div>
-                <div style={{ fontSize: 11.5, color: "var(--txt-3)" }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: "var(--txt)" }}>
+                  {selectedUser.username}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--txt-2)" }}>
                   {selectedUser.kelamin ?? "Kelamin belum diset"}
                   {selectedUser.tanggal_lahir && (
-                    <> · {new Date(selectedUser.tanggal_lahir).toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })}</>
+                    <>
+                      {" · "}
+                      {new Date(selectedUser.tanggal_lahir).toLocaleDateString("id-ID", {
+                        day: "numeric",
+                        month: "long",
+                        year: "numeric",
+                      })}
+                    </>
                   )}
                 </div>
               </div>
@@ -485,20 +588,19 @@ function DashboardInner() {
                   {latestKat.label}
                 </span>
               )}
-              <span style={{ fontSize: 12, color: "var(--txt-3)", marginLeft: latestKat ? 0 : "auto" }}>
+              <span
+                style={{
+                  fontSize: 12,
+                  color: "var(--txt-2)",
+                  marginLeft: latestKat ? 0 : "auto",
+                }}
+              >
                 {records.length} entri
               </span>
             </div>
 
-            {/* ── Stat cards ── */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-                gap: 14,
-                marginBottom: 28,
-              }}
-            >
+            {/* ── Stat cards — responsive via .stat-grid CSS class ── */}
+            <div className="stat-grid">
               <StatCard
                 label="Body Fat Terakhir"
                 value={latest?.body_fat ?? null}
@@ -532,150 +634,255 @@ function DashboardInner() {
               />
             </div>
 
-            {/* ── No records empty state ── */}
-            {records.length === 0 && (
-              <div className="card animate-fade-in" style={{ padding: "60px 24px", textAlign: "center" }}>
-                <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
-                <p style={{ fontSize: 15, fontWeight: 600, color: "var(--txt)", marginBottom: 8 }}>
-                  Belum ada data untuk {selectedUser.username}
-                </p>
-                <p style={{ fontSize: 13, color: "var(--txt-2)", marginBottom: 24 }}>
-                  Log pengukuran pertama untuk mulai melihat grafik.
-                </p>
-                <a href="/body-metrics" className="btn btn-primary">+ Log Metrics</a>
+            {/* ── Body diagram + right panel ──────────────────────
+             *
+             * Layout fix: use .diagram-row CSS class (defined in globals.css)
+             * instead of an inline gridTemplateColumns so media queries work.
+             *
+             * align-items is deliberately omitted from the class (defaults to
+             * "stretch") so both columns grow to the same height — this prevents
+             * the body diagram card from clipping its SVG content against a
+             * shorter right card.
+             ─────────────────────────────────────────────────── */}
+            <div className="diagram-row animate-fade-up delay-2">
+              {/* left: body diagram — wrapped in .diagram-col for responsive centering */}
+              <div className="diagram-col">
+                <BodyDiagram
+                  leher={latest?.lingkar_leher ?? null}
+                  pinggang={latest?.lingkar_pinggang ?? null}
+                  pinggul={latest?.lingkar_pinggul ?? null}
+                  bb={latest?.bb ?? null}
+                  kelamin={selectedUser.kelamin}
+                />
               </div>
-            )}
 
-            {/* ── Charts ── */}
+              {/* right: contextual panel */}
+              {records.length === 0 && (
+                <EmptyState username={selectedUser.username} />
+              )}
+
+              {records.length === 1 && (
+                <div
+                  className="card animate-fade-in"
+                  style={{
+                    padding: "28px 24px",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    gap: 12,
+                    border: "1px solid var(--border-2)",
+                  }}
+                >
+                  {/* progress bar: 1 of 2 */}
+                  <div style={{ marginBottom: 4 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        marginBottom: 6,
+                      }}
+                    >
+                      <span style={{ fontSize: 12, color: "var(--txt-2)", fontWeight: 600 }}>
+                        Progress ke grafik tren
+                      </span>
+                      <span style={{ fontSize: 12, color: "var(--accent)", fontWeight: 700 }}>
+                        1 / 2
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        height: 5,
+                        background: "var(--surface-2)",
+                        borderRadius: 99,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: "50%",
+                          background: "var(--accent)",
+                          borderRadius: 99,
+                          boxShadow: "0 0 8px var(--accent-glow)",
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <p style={{ fontSize: 14, fontWeight: 700, color: "var(--txt)", margin: 0 }}>
+                    1 entri logged ✓
+                  </p>
+                  <p style={{ fontSize: 13, color: "var(--txt-2)", margin: 0, lineHeight: 1.6 }}>
+                    Butuh satu lagi untuk menampilkan grafik tren. Log entri
+                    berikutnya setelah latihan!
+                  </p>
+                  <a
+                    href="/body-metrics"
+                    className="btn btn-primary"
+                    style={{ alignSelf: "flex-start", marginTop: 4 }}
+                  >
+                    + Log Entri Berikutnya
+                  </a>
+                </div>
+              )}
+
+              {records.length >= 2 && chartData.some((d) => d.body_fat != null) && (
+                <div className="card animate-fade-up delay-3" style={{ padding: "24px 20px 16px" }}>
+                  <ChartLabel>Body Fat % · Tren</ChartLabel>
+                  <ResponsiveContainer width="100%" height={200}>
+                    <AreaChart
+                      data={chartData}
+                      margin={{ top: 4, right: 4, left: -28, bottom: 0 }}
+                    >
+                      <defs>
+                        <linearGradient id="bfGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#c8ff00" stopOpacity={0.25} />
+                          <stop offset="100%" stopColor="#c8ff00" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid
+                        stroke="var(--border)"
+                        strokeDasharray="3 3"
+                        vertical={false}
+                      />
+                      <XAxis {...xAxisProps} />
+                      <YAxis {...yAxisStyle} />
+                      <Tooltip content={renderTooltip} />
+                      <Area
+                        type="monotone"
+                        dataKey="body_fat"
+                        name="%"
+                        stroke="#c8ff00"
+                        strokeWidth={2}
+                        fill="url(#bfGrad)"
+                        dot={{ fill: "#c8ff00", r: 3, strokeWidth: 0 }}
+                        activeDot={{ r: 5, fill: "#c8ff00", stroke: "var(--bg)", strokeWidth: 2 }}
+                        connectNulls
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* fallback when ≥2 records but no body_fat data */}
+              {records.length >= 2 && !chartData.some((d) => d.body_fat != null) && (
+                <div
+                  className="card"
+                  style={{
+                    padding: "24px",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexDirection: "column",
+                    gap: 8,
+                    textAlign: "center",
+                  }}
+                >
+                  <p style={{ fontSize: 13, color: "var(--txt-2)" }}>
+                    Belum ada data Body Fat untuk ditampilkan.
+                  </p>
+                  <p style={{ fontSize: 12, color: "var(--txt-3)" }}>
+                    Pastikan lingkar leher &amp; pinggang diisi agar US Navy
+                    menghitung % lemak tubuh.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* ── Bottom charts (≥2 records) — 3-col responsive grid ── */}
             {records.length >= 2 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              <div className="chart-grid animate-fade-up delay-3">
 
-                {/* Body Fat area chart */}
-                {chartData.some((d) => d.body_fat != null) && (
-                  <div className="card animate-fade-up delay-2" style={{ padding: "24px 20px 16px" }}>
-                    <p style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--txt-3)", marginBottom: 18 }}>
-                      Body Fat % · Tren
-                    </p>
-                    <ResponsiveContainer width="100%" height={200}>
-                      <AreaChart data={chartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-                        <defs>
-                          <linearGradient id="bfGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%"   stopColor="#c8ff00" stopOpacity={0.25} />
-                            <stop offset="100%" stopColor="#c8ff00" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                        {/* dataKey="id" uses the UUID as the unique point identity */}
-                        <XAxis
-                          dataKey="id"
-                          tickFormatter={(id) => chartData.find((p) => p.id === id)?.date ?? ""}
-                          tick={{ fill: "var(--txt-3)", fontSize: 10 }}
-                          axisLine={false}
-                          tickLine={false}
+                {/* Weight */}
+                {chartData.some((d) => d.bb != null) && (
+                  <div className="card" style={{ padding: "24px 20px 16px" }}>
+                    <ChartLabel>Berat Badan (kg)</ChartLabel>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <LineChart
+                        data={chartData}
+                        margin={{ top: 4, right: 4, left: -28, bottom: 0 }}
+                      >
+                        <CartesianGrid
+                          stroke="var(--border)"
+                          strokeDasharray="3 3"
+                          vertical={false}
                         />
-                        <YAxis tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
+                        <XAxis {...xAxisProps} />
+                        <YAxis {...yAxisStyle} />
                         <Tooltip content={renderTooltip} />
-                        <Area
+                        <Line
                           type="monotone"
-                          dataKey="body_fat"
-                          name="%"
-                          stroke="#c8ff00"
+                          dataKey="bb"
+                          name="kg"
+                          stroke="var(--blue)"
                           strokeWidth={2}
-                          fill="url(#bfGrad)"
-                          dot={{ fill: "#c8ff00", r: 3, strokeWidth: 0 }}
-                          activeDot={{ r: 5, fill: "#c8ff00", stroke: "var(--bg)", strokeWidth: 2 }}
+                          dot={{ fill: "var(--blue)", r: 3, strokeWidth: 0 }}
+                          activeDot={{ r: 5, stroke: "var(--bg)", strokeWidth: 2 }}
                           connectNulls
                         />
-                      </AreaChart>
+                      </LineChart>
                     </ResponsiveContainer>
                   </div>
                 )}
 
-                {/* Berat Badan + Pinggang two-column */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-
-                  {chartData.some((d) => d.bb != null) && (
-                    <div className="card animate-fade-up delay-3" style={{ padding: "24px 20px 16px" }}>
-                      <p style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--txt-3)", marginBottom: 18 }}>
-                        Berat Badan (kg)
-                      </p>
-                      <ResponsiveContainer width="100%" height={160}>
-                        <LineChart data={chartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-                          <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                          <XAxis
-                            dataKey="id"
-                            tickFormatter={(id) => chartData.find((p) => p.id === id)?.date ?? ""}
-                            tick={{ fill: "var(--txt-3)", fontSize: 10 }}
-                            axisLine={false}
-                            tickLine={false}
-                          />
-                          <YAxis tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
-                          <Tooltip content={renderTooltip} />
-                          <Line
-                            type="monotone"
-                            dataKey="bb"
-                            name="kg"
-                            stroke="var(--blue)"
-                            strokeWidth={2}
-                            dot={{ fill: "var(--blue)", r: 3, strokeWidth: 0 }}
-                            activeDot={{ r: 5, stroke: "var(--bg)", strokeWidth: 2 }}
-                            connectNulls
-                          />
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-
-                  {chartData.some((d) => d.pinggang != null) && (
-                    <div className="card animate-fade-up delay-3" style={{ padding: "24px 20px 16px" }}>
-                      <p style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--txt-3)", marginBottom: 18 }}>
-                        Lingkar Pinggang (cm)
-                      </p>
-                      <ResponsiveContainer width="100%" height={160}>
-                        <BarChart data={chartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-                          <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                          <XAxis
-                            dataKey="id"
-                            tickFormatter={(id) => chartData.find((p) => p.id === id)?.date ?? ""}
-                            tick={{ fill: "var(--txt-3)", fontSize: 10 }}
-                            axisLine={false}
-                            tickLine={false}
-                          />
-                          <YAxis tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
-                          <Tooltip content={renderTooltip} />
-                          <Bar dataKey="pinggang" name="cm" fill="var(--amber)" radius={[4, 4, 0, 0]} opacity={0.85} />
-                          {selectedUser.kelamin === "PRIA" && (
-                            <ReferenceLine
-                              y={94}
-                              stroke="var(--red)"
-                              strokeDasharray="4 3"
-                              strokeWidth={1.5}
-                              label={{ value: "Batas risiko", fill: "var(--red)", fontSize: 9 }}
-                            />
-                          )}
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-                </div>
-
-                {/* Neck circumference */}
-                {chartData.some((d) => d.leher != null) && (
-                  <div className="card animate-fade-up delay-4" style={{ padding: "24px 20px 16px" }}>
-                    <p style={{ fontSize: 12.5, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--txt-3)", marginBottom: 18 }}>
-                      Lingkar Leher (cm)
-                    </p>
-                    <ResponsiveContainer width="100%" height={140}>
-                      <LineChart data={chartData} margin={{ top: 4, right: 4, left: -28, bottom: 0 }}>
-                        <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-                        <XAxis
-                          dataKey="id"
-                          tickFormatter={(id) => chartData.find((p) => p.id === id)?.date ?? ""}
-                          tick={{ fill: "var(--txt-3)", fontSize: 10 }}
-                          axisLine={false}
-                          tickLine={false}
+                {/* Waist */}
+                {chartData.some((d) => d.pinggang != null) && (
+                  <div className="card" style={{ padding: "24px 20px 16px" }}>
+                    <ChartLabel>Lingkar Pinggang (cm)</ChartLabel>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <BarChart
+                        data={chartData}
+                        margin={{ top: 4, right: 4, left: -28, bottom: 0 }}
+                      >
+                        <CartesianGrid
+                          stroke="var(--border)"
+                          strokeDasharray="3 3"
+                          vertical={false}
                         />
-                        <YAxis tick={{ fill: "var(--txt-3)", fontSize: 10 }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
+                        <XAxis {...xAxisProps} />
+                        <YAxis {...yAxisStyle} />
+                        <Tooltip content={renderTooltip} />
+                        <Bar
+                          dataKey="pinggang"
+                          name="cm"
+                          fill="var(--amber)"
+                          radius={[4, 4, 0, 0]}
+                          opacity={0.85}
+                        />
+                        {selectedUser.kelamin === "PRIA" && (
+                          <ReferenceLine
+                            y={94}
+                            stroke="var(--red)"
+                            strokeDasharray="4 3"
+                            strokeWidth={1.5}
+                            label={{
+                              value: "Batas risiko",
+                              fill: "var(--red)",
+                              fontSize: 9,
+                            }}
+                          />
+                        )}
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+
+                {/* Neck */}
+                {chartData.some((d) => d.leher != null) && (
+                  <div className="card" style={{ padding: "24px 20px 16px" }}>
+                    <ChartLabel>Lingkar Leher (cm)</ChartLabel>
+                    <ResponsiveContainer width="100%" height={160}>
+                      <LineChart
+                        data={chartData}
+                        margin={{ top: 4, right: 4, left: -28, bottom: 0 }}
+                      >
+                        <CartesianGrid
+                          stroke="var(--border)"
+                          strokeDasharray="3 3"
+                          vertical={false}
+                        />
+                        <XAxis {...xAxisProps} />
+                        <YAxis {...yAxisStyle} />
                         <Tooltip content={renderTooltip} />
                         <Line
                           type="monotone"
@@ -693,34 +900,6 @@ function DashboardInner() {
                 )}
               </div>
             )}
-
-            {/* single entry nudge */}
-            {records.length === 1 && (
-              <div
-                className="card animate-fade-in"
-                style={{
-                  padding: "24px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 16,
-                  flexWrap: "wrap",
-                  borderColor: "var(--accent-dim)",
-                }}
-              >
-                <div>
-                  <p style={{ fontSize: 14, fontWeight: 600, color: "var(--txt)", marginBottom: 4 }}>
-                    1 entri logged
-                  </p>
-                  <p style={{ fontSize: 13, color: "var(--txt-2)" }}>
-                    Butuh ≥ 2 entri untuk menampilkan grafik tren.
-                  </p>
-                </div>
-                <a href="/body-metrics" className="btn btn-primary" style={{ flexShrink: 0 }}>
-                  + Log Entri Berikutnya
-                </a>
-              </div>
-            )}
           </>
         )}
       </main>
@@ -728,12 +907,19 @@ function DashboardInner() {
   );
 }
 
-/* ─── page export (wraps in Suspense for useSearchParams) ── */
+/* ─── page export ────────────────────────────────────────── */
 export default function DashboardPage() {
   return (
     <Suspense
       fallback={
-        <div style={{ minHeight: "100dvh", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div
+          style={{
+            minHeight: "100dvh",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
           <span className="spinner" style={{ width: 28, height: 28, borderWidth: 3 }} />
         </div>
       }
