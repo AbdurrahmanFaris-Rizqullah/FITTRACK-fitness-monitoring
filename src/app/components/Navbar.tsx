@@ -10,29 +10,27 @@ const NAV_LINKS = [
   { href: "/users",        label: "Users"     },
 ];
 
-/* ── Hamburger icon (pure SVG, no deps) ────────────────────── */
+/* ── Hamburger icon ─────────────────────────────────────────── */
 function HamburgerIcon({ open }: { open: boolean }) {
   return (
     <svg
-      width="18"
-      height="18"
-      viewBox="0 0 18 18"
+      width="20"
+      height="20"
+      viewBox="0 0 20 20"
       fill="none"
       aria-hidden="true"
-      style={{ transition: "transform 0.2s", display: "block" }}
+      style={{ display: "block", flexShrink: 0 }}
     >
       {open ? (
-        /* × close icon */
         <>
-          <line x1="2" y1="2"  x2="16" y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          <line x1="16" y1="2" x2="2"  y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <line x1="4" y1="4"  x2="16" y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <line x1="16" y1="4" x2="4"  y2="16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </>
       ) : (
-        /* ≡ menu icon */
         <>
-          <line x1="2" y1="4"  x2="16" y2="4"  stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          <line x1="2" y1="9"  x2="16" y2="9"  stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          <line x1="2" y1="14" x2="16" y2="14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <line x1="3" y1="5"  x2="17" y2="5"  stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          <line x1="3" y1="15" x2="17" y2="15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </>
       )}
     </svg>
@@ -40,21 +38,37 @@ function HamburgerIcon({ open }: { open: boolean }) {
 }
 
 export default function Navbar() {
-  const pathname              = usePathname();
-  const [open, setOpen]       = useState(false);
-  const drawerRef             = useRef<HTMLDivElement>(null);
-  const hamburgerRef          = useRef<HTMLButtonElement>(null);
+  const pathname         = usePathname();
+  const [open, setOpen]  = useState(false);
+  const drawerRef        = useRef<HTMLDivElement>(null);
+  const hamburgerRef     = useRef<HTMLButtonElement>(null);
+  /*
+   * Track whether we're on the client so we never render the drawer in
+   * a server-rendered state that could cause a hydration mismatch.
+   */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
-  /* ── Close on route change ────────────────────────────────── */
+  /* ── Close on route change ──────────────────────────────── */
   useEffect(() => { setOpen(false); }, [pathname]);
 
-  /* ── Lock body scroll while drawer is open ───────────────── */
+  /* ── Lock body scroll while drawer is open (NOT overflow:hidden on body)
+   * We add a CSS class to <html> instead of mutating body.style directly,
+   * so we don't fight with other code and avoid iOS fixed-position bugs.
+   */
   useEffect(() => {
-    document.body.style.overflow = open ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
-  }, [open]);
+    if (!mounted) return;
+    if (open) {
+      document.documentElement.classList.add("nav-open");
+    } else {
+      document.documentElement.classList.remove("nav-open");
+    }
+    return () => {
+      document.documentElement.classList.remove("nav-open");
+    };
+  }, [open, mounted]);
 
-  /* ── Close on Escape key ─────────────────────────────────── */
+  /* ── Escape key ────────────────────────────────────────── */
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === "Escape" && open) {
       setOpen(false);
@@ -63,20 +77,27 @@ export default function Navbar() {
   }, [open]);
 
   useEffect(() => {
+    if (!mounted) return;
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
+  }, [handleKeyDown, mounted]);
 
-  /* ── Trap focus inside drawer when open ─────────────────────
-   * Simple: when drawer opens, move focus to first link.        */
+  /* ── Move focus into drawer when it opens ─────────────── */
   useEffect(() => {
-    if (open) {
-      const first = drawerRef.current?.querySelector<HTMLElement>("a, button");
-      first?.focus();
-    }
-  }, [open]);
+    if (!mounted || !open) return;
+    const first = drawerRef.current?.querySelector<HTMLElement>("a, button");
+    first?.focus();
+  }, [open, mounted]);
 
+  /*
+   * Use a regular click handler — onPointerDown fires before the browser
+   * scroll-gesture recogniser on iOS which can swallow pointer events on
+   * fast taps if we use onPointerDown without also calling
+   * e.preventDefault(). A plain onClick after touch-action:manipulation
+   * is the safest cross-device approach.
+   */
   const toggle = () => setOpen((v) => !v);
+  const close  = () => setOpen(false);
 
   return (
     <>
@@ -86,7 +107,7 @@ export default function Navbar() {
           top: 0,
           zIndex: 50,
           borderBottom: "1px solid var(--border)",
-          background: "rgba(12,12,14,0.92)",
+          background: "rgba(12,12,14,0.95)",
           backdropFilter: "blur(16px)",
           WebkitBackdropFilter: "blur(16px)",
         }}
@@ -95,27 +116,27 @@ export default function Navbar() {
           style={{
             maxWidth: 1120,
             margin: "0 auto",
-            padding: "0 24px",
+            padding: "0 16px",
             height: "var(--navbar-h, 58px)",
             display: "flex",
             alignItems: "center",
             gap: 8,
           }}
         >
-          {/* ── Wordmark ─────────────────────────────────────── */}
+          {/* Wordmark */}
           <Link
             href="/"
             style={{
               fontFamily: "var(--font-display)",
-              fontSize: "1.35rem",
+              fontSize: "1.25rem",
               letterSpacing: "0.1em",
               color: "var(--txt)",
               textDecoration: "none",
               display: "flex",
               alignItems: "center",
               gap: 8,
-              marginRight: 16,
               flexShrink: 0,
+              marginRight: 8,
             }}
           >
             <span
@@ -133,8 +154,11 @@ export default function Navbar() {
             FIT-TRACKING
           </Link>
 
-          {/* ── Desktop links (hidden on mobile via CSS class) ── */}
-          <div className="nav-links-desktop" style={{ display: "flex", alignItems: "center", gap: 2, flex: 1 }}>
+          {/* Desktop nav links — hidden on mobile via .nav-links-desktop CSS class */}
+          <div
+            className="nav-links-desktop"
+            style={{ display: "flex", alignItems: "center", gap: 2, flex: 1 }}
+          >
             {NAV_LINKS.map(({ href, label }) => {
               const active = pathname === href || pathname.startsWith(href + "/");
               return (
@@ -152,6 +176,7 @@ export default function Navbar() {
                     textDecoration: "none",
                     transition: "all 0.15s var(--ease)",
                     letterSpacing: "0.01em",
+                    whiteSpace: "nowrap",
                   }}
                   onMouseEnter={(e) => {
                     if (!active) {
@@ -172,49 +197,71 @@ export default function Navbar() {
             })}
           </div>
 
-          {/* Spacer on mobile so hamburger sits on the right */}
-          <div style={{ flex: 1 }} className="nav-links-desktop" aria-hidden="true" />
+          {/* Flex spacer — only on desktop (hidden on mobile with the links) */}
+          <div className="nav-links-desktop" style={{ flex: 1 }} aria-hidden="true" />
 
-          {/* ── Desktop CTA ──────────────────────────────────── */}
+          {/* Desktop CTA — hidden on mobile */}
           <Link
             href="/body-metrics"
             className="btn btn-primary nav-cta-desktop"
-            style={{ fontSize: 12.5, padding: "7px 16px", flexShrink: 0 }}
+            style={{ fontSize: 12.5, padding: "7px 16px", flexShrink: 0, whiteSpace: "nowrap" }}
           >
             + Log Metrics
           </Link>
 
-          {/* ── Hamburger button (mobile only, shown via CSS) ── */}
+          {/*
+           * Hamburger — only visible on mobile (≤767px) via CSS.
+           *
+           * Placed LAST in flex order so it sits at the right edge on mobile
+           * (wordmark is flex-start, this is pushed by the margin-left: auto below).
+           *
+           * z-index: 52 ensures it renders above the sticky header (50) and
+           * the drawer (51) so it's always tappable even if the drawer is open.
+           */}
           <button
             ref={hamburgerRef}
+            type="button"
             className="nav-hamburger"
-            aria-label={open ? "Tutup menu navigasi" : "Buka menu navigasi"}
+            aria-label={open ? "Tutup menu" : "Buka menu"}
             aria-expanded={open}
             aria-controls="mobile-nav-drawer"
             onClick={toggle}
+            style={{ marginLeft: "auto" }}
           >
             <HamburgerIcon open={open} />
           </button>
         </nav>
       </header>
 
-      {/* ── Overlay (closes drawer on tap outside) ─────────── */}
+      {/*
+       * Overlay — rendered outside <header> so it covers the full page.
+       * Uses visibility + opacity transition (NOT display:none/block) so
+       * the CSS transition plays correctly on iOS Safari.
+       * pointer-events:none when hidden prevents tap-through.
+       */}
       <div
         className="nav-drawer-overlay"
-        data-open={String(open)}
+        data-open={mounted ? String(open) : "false"}
         aria-hidden="true"
-        onClick={() => setOpen(false)}
+        onClick={close}
       />
 
-      {/* ── Mobile drawer ────────────────────────────────────── */}
+      {/*
+       * Drawer — slides down from under the sticky header.
+       * z-index: 51 puts it above the header (50) on screen but it starts
+       * at top: var(--navbar-h) so it visually emerges from below the header.
+       *
+       * role="dialog" + aria-modal="true" tells screen readers this is a
+       * modal panel; aria-label provides the accessible name.
+       */}
       <div
         id="mobile-nav-drawer"
         ref={drawerRef}
         className="nav-drawer"
-        data-open={String(open)}
+        data-open={mounted ? String(open) : "false"}
         role="dialog"
         aria-modal="true"
-        aria-label="Navigasi"
+        aria-label="Navigasi utama"
       >
         {/* Nav links */}
         {NAV_LINKS.map(({ href, label }) => {
@@ -225,9 +272,8 @@ export default function Navbar() {
               href={href}
               className="nav-drawer-link"
               aria-current={active ? "page" : undefined}
-              onClick={() => setOpen(false)}
+              onClick={close}
             >
-              {/* active indicator dot */}
               <span
                 aria-hidden="true"
                 style={{
@@ -236,7 +282,6 @@ export default function Navbar() {
                   borderRadius: "50%",
                   flexShrink: 0,
                   background: active ? "var(--accent)" : "var(--border-2)",
-                  transition: "background 0.15s",
                 }}
               />
               {label}
@@ -245,21 +290,15 @@ export default function Navbar() {
         })}
 
         {/* Divider */}
-        <div
-          style={{
-            height: 1,
-            background: "var(--border)",
-            margin: "8px 20px",
-          }}
-        />
+        <div style={{ height: 1, background: "var(--border)", margin: "8px 20px" }} />
 
-        {/* CTA inside drawer */}
-        <div style={{ padding: "8px 20px" }}>
+        {/* CTA */}
+        <div style={{ padding: "8px 20px 4px" }}>
           <Link
             href="/body-metrics"
             className="btn btn-primary"
-            style={{ width: "100%", fontSize: 14, padding: "12px 20px" }}
-            onClick={() => setOpen(false)}
+            style={{ width: "100%", fontSize: 14, padding: "13px 20px" }}
+            onClick={close}
           >
             + Log Metrics
           </Link>

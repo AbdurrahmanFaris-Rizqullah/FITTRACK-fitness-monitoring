@@ -56,6 +56,11 @@
 
 html { scroll-behavior: smooth; }
 
+/* Eliminate iOS 300ms tap delay on all interactive elements */
+a, button, input, select, textarea, label {
+  touch-action: manipulation;
+}
+
 body {
   background: var(--bg);
   color: var(--txt);
@@ -84,7 +89,14 @@ body {
 /* ─── Animated gradient noise bg ────────────────────────────── */
 .noise-bg {
   position: relative;
+  /*
+   * isolation: isolate creates a new stacking context which is required
+   * for the z-index:-1 pseudo-element below. However on some mobile
+   * browsers it triggers a full GPU layer which is expensive.
+   * We keep it but contain the repaint area.
+   */
   isolation: isolate;
+  contain: layout style;
 }
 .noise-bg::before {
   content: '';
@@ -95,6 +107,9 @@ body {
     radial-gradient(ellipse 80% 50% at 50% -10%, rgba(200,255,0,0.08) 0%, transparent 65%),
     radial-gradient(ellipse 60% 40% at 80% 110%, rgba(91,140,255,0.06) 0%, transparent 60%);
   pointer-events: none;
+  /* will-change: auto prevents the browser from promoting to a separate
+     compositor layer unnecessarily on mobile: */
+  will-change: auto;
 }
 
 /* ─── Card ──────────────────────────────────────────────────── */
@@ -275,8 +290,15 @@ select.input {
   100% { background-position:  400px 0; }
 }
 
-.animate-fade-up { animation: fadeUp 0.5s var(--ease) both; }
-.animate-fade-in { animation: fadeIn 0.4s var(--ease) both; }
+.animate-fade-up {
+  animation: fadeUp 0.45s var(--ease) both;
+  /* Safety net: if animation never fires, content is still visible */
+  animation-fill-mode: both;
+}
+.animate-fade-in {
+  animation: fadeIn 0.35s var(--ease) both;
+  animation-fill-mode: both;
+}
 
 /* stagger helpers */
 .delay-1 { animation-delay: 0.08s; }
@@ -387,7 +409,7 @@ select.input {
   grid-template-columns: 320px 1fr;
   gap: 20px;
   margin-bottom: 24px;
-  align-items: start;
+  align-items: stretch;  /* both columns same height — prevents SVG clipping */
 }
 @media (max-width: 768px) {
   .diagram-row {
@@ -430,17 +452,22 @@ select.input {
      xl   ≥ 1280 px — desktops
    ════════════════════════════════════════════════════════════ */
 
-/* ─── Base: prevent unintended horizontal overflow everywhere */
-html, body {
-  overflow-x: hidden;
-  /* iOS momentum scrolling */
-  -webkit-overflow-scrolling: touch;
+/* ─── Base: prevent unintended horizontal overflow everywhere ─
+ *
+ * IMPORTANT: Do NOT set overflow-x: hidden on <body>.
+ * On iOS Safari, overflow: hidden on the body breaks position:fixed
+ * elements (the nav drawer, overlay) and can freeze the entire page.
+ * Instead we clip on the outermost app wrapper and on individual
+ * sections that can overflow.
+ */
+html {
+  overflow-x: clip; /* clip, not hidden — does not create scroll container */
 }
 
 /* Prevent any direct child of body from busting the viewport */
 #__next, [data-nextjs-scroll-focus-boundary] {
   min-width: 0;
-  overflow-x: hidden;
+  overflow-x: clip;
 }
 
 /* ─── Safe-area padding helpers ─────────────────────────────
@@ -469,47 +496,77 @@ html, body {
   .page-container { padding-inline: 16px; }
 }
 
+/* ─── Navbar scroll-lock (applied to <html> not <body>) ─────
+ * Using html.nav-open prevents iOS Safari from losing track of
+ * fixed-position elements, which happens when overflow:hidden is
+ * applied directly to <body>.
+ */
+html.nav-open {
+  overflow: hidden;
+  /* On iOS, overflow:hidden on html can still allow scrolling.
+     height:100% + overflow:hidden is the reliable combo:        */
+  height: 100%;
+}
+html.nav-open body {
+  overflow: hidden;
+  height: 100%;
+  /* Prevent the page from jumping when scrollbar disappears:    */
+  padding-right: 0;
+}
+
 /* ─── Navbar height token (consumed by drawer calc) ─────────*/
 :root { --navbar-h: 58px; }
 
 /* ─── Mobile nav drawer ──────────────────────────────────────
  * Toggled by data-open attribute set in Navbar.tsx.
+ *
+ * We use visibility + pointer-events (NOT display:none) so that:
+ *   a) CSS opacity/transform transitions play correctly.
+ *   b) iOS Safari doesn't skip the transition on display:none elements.
  */
 .nav-drawer-overlay {
-  display: none;
   position: fixed;
   inset: 0;
-  z-index: 40;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  z-index: 48;
+  background: rgba(0, 0, 0, 0.55);
+  /* no backdrop-filter — it can cause iOS compositing bugs */
+  visibility: hidden;
   opacity: 0;
-  transition: opacity 0.25s var(--ease);
+  transition: opacity 0.22s var(--ease), visibility 0.22s var(--ease);
+  /* prevent accidental tap-through when hidden */
+  pointer-events: none;
 }
 .nav-drawer-overlay[data-open="true"] {
-  display: block;
+  visibility: visible;
   opacity: 1;
+  pointer-events: auto;
 }
 
 .nav-drawer {
   position: fixed;
-  top: var(--navbar-h);
+  top: var(--navbar-h, 58px);
   left: 0;
   right: 0;
-  z-index: 49;
-  background: rgba(12, 12, 14, 0.97);
+  /* above overlay (48) and header (50) — must be highest */
+  z-index: 51;
+  background: #0c0c0e;               /* solid, not rgba — avoids iOS blur cost */
   border-bottom: 1px solid var(--border-2);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
-  /* slide-down */
-  transform: translateY(-110%);
+  padding: 8px 0 calc(16px + env(safe-area-inset-bottom, 0px));
+  /* slide-down animation */
+  transform: translateY(-105%);
+  visibility: hidden;
   opacity: 0;
-  transition: transform 0.28s var(--ease), opacity 0.22s var(--ease);
+  transition:
+    transform  0.28s var(--ease),
+    opacity    0.22s var(--ease),
+    visibility 0.28s var(--ease);
   pointer-events: none;
+  /* contain to avoid painting outside this element */
+  contain: layout style;
 }
 .nav-drawer[data-open="true"] {
   transform: translateY(0);
+  visibility: visible;
   opacity: 1;
   pointer-events: auto;
 }
@@ -546,18 +603,24 @@ html, body {
   display: none; /* shown only via media query below */
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  width: 44px;   /* proper touch target */
+  height: 44px;  /* proper touch target */
   border-radius: var(--r-md);
   border: 1px solid var(--border-2);
   background: transparent;
   cursor: pointer;
   color: var(--txt-2);
   transition: background 0.15s var(--ease), color 0.15s var(--ease);
+  /* iOS: eliminates 300ms tap delay without needing touch-action on html */
+  touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
   flex-shrink: 0;
+  /* ensure clickable above everything in the header */
+  position: relative;
+  z-index: 52;
 }
 .nav-hamburger:hover { background: var(--surface-2); color: var(--txt); }
+.nav-hamburger:active { background: var(--surface-2); color: var(--txt); }
 .nav-hamburger:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -703,12 +766,9 @@ html, body {
 }
 
 /* ─── Dashboard diagram row align fix ───────────────────────
- * Override the previously set align-items:start so both columns
- * stretch to the same height, preventing SVG clipping.
+ * align-items:stretch is set in the main .diagram-row definition above.
+ * This duplicate was removed to prevent the cascade conflict.
  */
-.diagram-row {
-  align-items: stretch;
-}
 
 /* ─── Minimum touch target helper ───────────────────────────*/
 .touch-target {
