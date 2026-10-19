@@ -418,3 +418,339 @@ select.input {
   fill: #8e8aaa !important;
   font-size: 11px !important;
 }
+
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE SYSTEM
+   ────────────────────────────────────────────────────────────
+   Breakpoints (mobile-first):
+     xs   < 480 px  — small phones (320–479)
+     sm   ≥ 480 px  — large phones / phablets
+     md   ≥ 768 px  — tablets
+     lg   ≥ 1024 px — laptops / small desktops
+     xl   ≥ 1280 px — desktops
+   ════════════════════════════════════════════════════════════ */
+
+/* ─── Base: prevent unintended horizontal overflow everywhere */
+html, body {
+  overflow-x: hidden;
+  /* iOS momentum scrolling */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Prevent any direct child of body from busting the viewport */
+#__next, [data-nextjs-scroll-focus-boundary] {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+/* ─── Safe-area padding helpers ─────────────────────────────
+ * Use on the outermost page wrappers so content is never
+ * hidden behind notches, home indicators, or rounded corners.
+ */
+.safe-x {
+  padding-left:  max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+}
+.safe-bottom {
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+/* ─── Page container ─────────────────────────────────────────
+ * Replaces every inline: maxWidth:1120, margin:"0 auto", padding:"… 24px"
+ * Add class="page-container" instead of those three inline styles.
+ */
+.page-container {
+  width: 100%;
+  max-width: 1120px;
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+@media (max-width: 479px) {
+  .page-container { padding-inline: 16px; }
+}
+
+/* ─── Navbar height token (consumed by drawer calc) ─────────*/
+:root { --navbar-h: 58px; }
+
+/* ─── Mobile nav drawer ──────────────────────────────────────
+ * Toggled by data-open attribute set in Navbar.tsx.
+ */
+.nav-drawer-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0;
+  transition: opacity 0.25s var(--ease);
+}
+.nav-drawer-overlay[data-open="true"] {
+  display: block;
+  opacity: 1;
+}
+
+.nav-drawer {
+  position: fixed;
+  top: var(--navbar-h);
+  left: 0;
+  right: 0;
+  z-index: 49;
+  background: rgba(12, 12, 14, 0.97);
+  border-bottom: 1px solid var(--border-2);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  padding: 12px 0 calc(12px + env(safe-area-inset-bottom));
+  /* slide-down */
+  transform: translateY(-110%);
+  opacity: 0;
+  transition: transform 0.28s var(--ease), opacity 0.22s var(--ease);
+  pointer-events: none;
+}
+.nav-drawer[data-open="true"] {
+  transform: translateY(0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Individual drawer link */
+.nav-drawer-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 20px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--txt-2);
+  text-decoration: none;
+  border-radius: 0;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+  min-height: 48px; /* 44 px touch target */
+  -webkit-tap-highlight-color: transparent;
+}
+.nav-drawer-link:hover,
+.nav-drawer-link:focus-visible {
+  background: var(--surface-2);
+  color: var(--txt);
+  outline: none;
+}
+.nav-drawer-link[aria-current="page"] {
+  color: var(--accent);
+  background: var(--accent-dim);
+  font-weight: 600;
+}
+
+/* Hamburger button */
+.nav-hamburger {
+  display: none; /* shown only via media query below */
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-2);
+  background: transparent;
+  cursor: pointer;
+  color: var(--txt-2);
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+  -webkit-tap-highlight-color: transparent;
+  flex-shrink: 0;
+}
+.nav-hamburger:hover { background: var(--surface-2); color: var(--txt); }
+.nav-hamburger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ─── Show hamburger, hide regular links below md ───────────*/
+@media (max-width: 767px) {
+  .nav-links-desktop { display: none !important; }
+  .nav-cta-desktop   { display: none !important; }
+  .nav-hamburger     { display: flex; }
+}
+
+/* ─── Stat grid (already defined above; kept for reference) ─*/
+/* .stat-grid: 4→2→1 col — defined in the earlier block      */
+
+/* ─── Body metrics page: form + sidebar 2-col ───────────────*/
+.bm-layout {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 24px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .bm-layout { grid-template-columns: 1fr; }
+}
+
+/* ─── Form field grids ───────────────────────────────────────
+ * .form-grid-2   — 2 equal cols, collapses to 1 col on xs
+ * .form-grid-3   — 3 cols → 2 → 1
+ * .form-grid-auto — repeat(auto-fill, minmax(200px,1fr))
+ */
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 479px) {
+  .form-grid-2 { grid-template-columns: 1fr; }
+}
+
+.form-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 767px) {
+  .form-grid-3 { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 479px) {
+  .form-grid-3 { grid-template-columns: 1fr; }
+}
+
+.form-grid-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+@media (max-width: 479px) {
+  .form-grid-auto { grid-template-columns: 1fr; }
+}
+
+/* ─── User card row ──────────────────────────────────────────
+ * The existing cards use inline flexWrap which works, but the
+ * "Lihat Dashboard" button needs to always sit on its own row
+ * at narrow widths so it doesn't squash the name/badges area.
+ */
+.user-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.user-card-body {
+  flex: 1;
+  min-width: 120px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+@media (max-width: 479px) {
+  .user-card { gap: 12px; }
+  .user-card-cta {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ─── Hero layout (home page) ────────────────────────────────*/
+.hero-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 80px 24px 60px;
+  gap: 64px;
+  width: 100%;
+}
+@media (max-width: 900px) {
+  .hero-section {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 40px;
+    padding: 48px 24px 48px;
+  }
+  .hero-mock-card {
+    width: 100%;
+    max-width: 420px;
+    align-self: center;
+  }
+}
+@media (max-width: 479px) {
+  .hero-section { padding: 32px 16px 40px; gap: 32px; }
+}
+
+/* Hide mock card completely on very small screens to save space */
+@media (max-width: 374px) {
+  .hero-mock-card { display: none; }
+}
+
+/* ─── Features grid (home page) ─────────────────────────────*/
+.features-section {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 40px 24px 80px;
+  width: 100%;
+}
+@media (max-width: 479px) {
+  .features-section { padding: 24px 16px 48px; }
+}
+
+/* ─── Page main padding: tighter on small screens ───────────*/
+.main-pad {
+  flex: 1;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 40px 24px;
+  width: 100%;
+}
+@media (max-width: 479px) {
+  .main-pad { padding: 24px 16px; }
+}
+
+/* ─── Dashboard diagram row align fix ───────────────────────
+ * Override the previously set align-items:start so both columns
+ * stretch to the same height, preventing SVG clipping.
+ */
+.diagram-row {
+  align-items: stretch;
+}
+
+/* ─── Minimum touch target helper ───────────────────────────*/
+.touch-target {
+  min-height: 44px;
+  min-width:  44px;
+}
+
+/* ─── Input touch sizing ─────────────────────────────────────
+ * On mobile, inputs should be at least 44 px tall.
+ * The existing .input has padding:10px 14px ≈ 38px — bump on touch.
+ */
+@media (max-width: 767px) {
+  .input {
+    padding: 12px 14px;
+    font-size: 16px; /* prevents iOS auto-zoom on focus */
+  }
+  select.input { font-size: 16px; }
+
+  .btn {
+    min-height: 44px;
+    padding: 10px 18px;
+  }
+}
+
+/* ─── Reduced-motion: disable non-essential animations ───────*/
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-fade-in {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .skeleton {
+    animation: none !important;
+    background: var(--surface-2) !important;
+  }
+  * { transition-duration: 0.01ms !important; }
+}
+
+/* ─── Print: strip decoration ───────────────────────────────*/
+@media print {
+  .nav-hamburger,
+  .nav-drawer,
+  .nav-drawer-overlay { display: none !important; }
+}

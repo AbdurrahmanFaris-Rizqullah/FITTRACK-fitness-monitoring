@@ -23,7 +23,7 @@ interface BodyMetric {
   created_at: string;
 }
 
-/* ─── client-side US Navy preview ────────────────────────── */
+/* ─── US Navy preview (unchanged) ────────────────────────── */
 function previewBodyFat(
   kelamin: "PRIA" | "WANITA" | null,
   tb: number,
@@ -47,7 +47,7 @@ function previewBodyFat(
 
   if (!isFinite(bf) || bf < 0 || bf > 70) return null;
 
-  const kategori = (k: "PRIA" | "WANITA", v: number) => {
+  const kat = (k: "PRIA" | "WANITA", v: number) => {
     if (k === "PRIA") {
       if (v < 5)  return "Sangat Kurus";
       if (v < 13) return "Atlet";
@@ -62,17 +62,17 @@ function previewBodyFat(
     return "Gemoy";
   };
 
-  return { value: parseFloat(bf.toFixed(2)), valid: true, kategori: kategori(kelamin, bf) };
+  return { value: parseFloat(bf.toFixed(2)), valid: true, kategori: kat(kelamin, bf) };
 }
 
 function kategoriColor(k: string) {
   switch (k) {
-    case "Atlet":        return { bg: "var(--blue-dim)",   color: "var(--blue)" };
+    case "Atlet":        return { bg: "var(--blue-dim)",   color: "var(--blue)"   };
     case "Bugar":        return { bg: "var(--accent-dim)", color: "var(--accent)" };
-    case "Rata-rata":    return { bg: "var(--amber-dim)",  color: "var(--amber)" };
-    case "Gemoy":        return { bg: "var(--red-dim)",    color: "var(--red)" };
-    case "Sangat Kurus": return { bg: "var(--red-dim)",    color: "var(--red)" };
-    default:             return { bg: "var(--surface-2)",  color: "var(--txt-2)" };
+    case "Rata-rata":    return { bg: "var(--amber-dim)",  color: "var(--amber)"  };
+    case "Gemoy":        return { bg: "var(--red-dim)",    color: "var(--red)"    };
+    case "Sangat Kurus": return { bg: "var(--red-dim)",    color: "var(--red)"    };
+    default:             return { bg: "var(--surface-2)",  color: "var(--txt-2)"  };
   }
 }
 
@@ -94,38 +94,25 @@ const EMPTY_FORM = {
 
 /* ─── component ──────────────────────────────────────────── */
 export default function BodyMetricsPage() {
-  const [users, setUsers]             = useState<User[]>([]);
-  const [records, setRecords]         = useState<BodyMetric[]>([]);
+  const [users,        setUsers]        = useState<User[]>([]);
+  const [records,      setRecords]      = useState<BodyMetric[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
-  const [loadingRecs, setLoadingRecs]   = useState(false);
-  const [error, setError]             = useState<string | null>(null);
-  const [showForm, setShowForm]       = useState(false);
-  const [submitting, setSubmitting]   = useState(false);
-  const [formErr, setFormErr]         = useState<string | null>(null);
-  const [submitOk, setSubmitOk]       = useState<string | null>(null);
-  const [form, setForm]               = useState(EMPTY_FORM);
+  const [loadingRecs,  setLoadingRecs]  = useState(false);
+  const [error,        setError]        = useState<string | null>(null);
+  const [showForm,     setShowForm]     = useState(false);
+  const [submitting,   setSubmitting]   = useState(false);
+  const [formErr,      setFormErr]      = useState<string | null>(null);
+  const [submitOk,     setSubmitOk]     = useState<string | null>(null);
+  const [form,         setForm]         = useState(EMPTY_FORM);
+  const [tbPrefill,    setTbPrefill]    = useState<number | null>(null);
 
-  /**
-   * tbPrefill — the most recently recorded height for the selected user.
-   * Updated whenever records reload (user switches or new record saved).
-   * Only shown when form.tb is empty (user hasn't typed anything yet).
-   */
-  const [tbPrefill, setTbPrefill] = useState<number | null>(null);
-
-  /* selected user's gender for live preview */
   const selectedUser = useMemo(
     () => users.find((u) => u.id_user === form.user_id) ?? null,
     [users, form.user_id]
   );
 
-  /**
-   * The effective tb value for the US Navy calculation:
-   * - If the user has typed something, use that.
-   * - If not, fall back to tbPrefill (the most recent recorded height).
-   */
   const effectiveTb = form.tb !== "" ? parseFloat(form.tb) : (tbPrefill ?? NaN);
 
-  /* live US Navy preview — uses effectiveTb so prefill feeds the preview too */
   const preview = useMemo(
     () =>
       previewBodyFat(
@@ -139,11 +126,10 @@ export default function BodyMetricsPage() {
     [selectedUser, effectiveTb, form.lingkar_leher, form.lingkar_pinggang, form.lingkar_pinggul]
   );
 
-  /* fetch users */
   const fetchUsers = useCallback(async () => {
     setLoadingUsers(true);
     try {
-      const res = await fetch("/api/users");
+      const res  = await fetch("/api/users");
       const json = await res.json();
       setUsers(json.data ?? []);
     } catch {
@@ -153,29 +139,15 @@ export default function BodyMetricsPage() {
     }
   }, []);
 
-  /**
-   * Fetch records for the given user.
-   * API returns newest-first (orderBy: created_at desc).
-   * records[0] is therefore the most recent entry.
-   * We extract tb from records[0] as the height prefill for that user.
-   */
   const fetchRecords = useCallback(async (uid: string) => {
-    if (!uid) {
-      setRecords([]);
-      setTbPrefill(null);
-      return;
-    }
+    if (!uid) { setRecords([]); setTbPrefill(null); return; }
     setLoadingRecs(true);
     try {
-      const res = await fetch(`/api/body-metrics?user_id=${uid}`);
+      const res  = await fetch(`/api/body-metrics?user_id=${uid}`);
       const json = await res.json();
       const data: BodyMetric[] = json.data ?? [];
       setRecords(data);
-
-      // Seed height prefill from the most recent record that has a tb value.
-      // records[0] is newest-first from the API.
-      const latestWithTb = data.find((r) => r.tb != null);
-      setTbPrefill(latestWithTb?.tb ?? null);
+      setTbPrefill(data.find((r) => r.tb != null)?.tb ?? null);
     } catch {
       setError("Gagal memuat body metrics");
     } finally {
@@ -185,11 +157,8 @@ export default function BodyMetricsPage() {
 
   useEffect(() => { fetchUsers(); }, [fetchUsers]);
 
-  /* When user_id changes: reset form fields (keep user_id), clear prefill
-     immediately, then load fresh records (which will set the new prefill). */
   useEffect(() => {
     if (form.user_id) {
-      // Reset form fields but keep user selection
       setForm((p) => ({ ...EMPTY_FORM, user_id: p.user_id }));
       setTbPrefill(null);
       setSubmitOk(null);
@@ -199,7 +168,6 @@ export default function BodyMetricsPage() {
       setRecords([]);
       setTbPrefill(null);
     }
-    // Only re-run when user_id changes, not when fetchRecords identity changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.user_id]);
 
@@ -212,10 +180,7 @@ export default function BodyMetricsPage() {
     setFormErr(null);
     setSubmitOk(null);
     if (!form.user_id) { setFormErr("Pilih user terlebih dahulu."); return; }
-
-    // Use the effective tb (prefill if user didn't override)
     const tbToSend = form.tb !== "" ? parseFloat(form.tb) : tbPrefill;
-
     setSubmitting(true);
     try {
       const res = await fetch("/api/body-metrics", {
@@ -239,7 +204,6 @@ export default function BodyMetricsPage() {
           ? `✓ Tersimpan! Body fat: ${bf}% — ${json.kalkulasi.kategori}`
           : "✓ Tersimpan! (Data US Navy belum lengkap, body fat tidak dihitung)"
       );
-      // Reset fields but preserve user selection; reload records to update prefill
       setForm((p) => ({ ...EMPTY_FORM, user_id: p.user_id }));
       fetchRecords(form.user_id);
     } catch (e: unknown) {
@@ -249,35 +213,46 @@ export default function BodyMetricsPage() {
     }
   }
 
-  const kColor = preview ? kategoriColor(preview.kategori) : null;
-
-  /* Is the tb field currently showing the prefilled value (user hasn't typed)? */
+  const kColor        = preview ? kategoriColor(preview.kategori) : null;
   const tbIsPrefilled = form.tb === "" && tbPrefill != null;
 
   return (
-    <div className="noise-bg" style={{ minHeight: "100dvh", display: "flex", flexDirection: "column" }}>
+    <div
+      className="noise-bg"
+      style={{ minHeight: "100dvh", display: "flex", flexDirection: "column" }}
+    >
       <Navbar />
 
-      <main style={{ flex: 1, maxWidth: 1120, margin: "0 auto", padding: "40px 24px", width: "100%" }}>
+      <main className="main-pad">
 
-        {/* ── Page header ── */}
+        {/* ── Page header ──────────────────────────────────────── */}
         <div className="animate-fade-up" style={{ marginBottom: 32 }}>
           <p className="label" style={{ marginBottom: 6 }}>Logging</p>
-          <h1 className="display" style={{ fontSize: "clamp(2.4rem, 4vw, 3.5rem)", color: "var(--txt)" }}>
+          <h1
+            className="display"
+            style={{ fontSize: "clamp(2.4rem, 4vw, 3.5rem)", color: "var(--txt)" }}
+          >
             Body Metrics
           </h1>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 24, alignItems: "start" }}>
+        {/*
+         * .bm-layout: 2-col (form | sidebar) → 1-col on ≤900 px (globals.css).
+         * On mobile the sidebar (preview + history) drops below the form.
+         */}
+        <div className="bm-layout">
 
-          {/* ── LEFT: Form ── */}
+          {/* ── LEFT: form column ─────────────────────────────── */}
           <div>
             {/* user picker */}
-            <div className="card animate-fade-up delay-1" style={{ padding: "22px 24px", marginBottom: 20 }}>
+            <div
+              className="card animate-fade-up delay-1"
+              style={{ padding: "22px 24px", marginBottom: 20 }}
+            >
               <label className="label" htmlFor="user-select">Pilih User</label>
               {loadingUsers ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
-                  <span className="spinner" />
+                  <span className="spinner" aria-hidden="true" />
                   <span style={{ fontSize: 13, color: "var(--txt-2)" }}>Memuat…</span>
                 </div>
               ) : (
@@ -291,9 +266,15 @@ export default function BodyMetricsPage() {
                     setFormErr(null);
                   }}
                 >
-                  <option value="" style={{ background: "var(--bg-3)" }}>— Pilih user —</option>
+                  <option value="" style={{ background: "var(--bg-3)" }}>
+                    — Pilih user —
+                  </option>
                   {users.map((u) => (
-                    <option key={u.id_user} value={u.id_user} style={{ background: "var(--bg-3)" }}>
+                    <option
+                      key={u.id_user}
+                      value={u.id_user}
+                      style={{ background: "var(--bg-3)" }}
+                    >
                       {u.username} {u.kelamin ? `(${u.kelamin})` : ""}
                     </option>
                   ))}
@@ -302,15 +283,35 @@ export default function BodyMetricsPage() {
             </div>
 
             {/* metrics form */}
-            <div className="card animate-fade-up delay-2" style={{ padding: "24px 24px 22px" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-                <h2 style={{ fontSize: 15, fontWeight: 600, color: "var(--txt)" }}>Log Pengukuran</h2>
+            <div
+              className="card animate-fade-up delay-2"
+              style={{ padding: "24px 24px 22px" }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  marginBottom: 20,
+                  gap: 12,
+                  flexWrap: "wrap",
+                }}
+              >
+                <h2 style={{ fontSize: 15, fontWeight: 600, color: "var(--txt)" }}>
+                  Log Pengukuran
+                </h2>
                 <button
                   type="button"
                   onClick={() => setShowForm(!showForm)}
                   style={{
-                    fontSize: 11.5, color: "var(--txt-3)", background: "none", border: "none",
-                    cursor: "pointer", textDecoration: "underline",
+                    fontSize: 12,
+                    color: "var(--txt-3)",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                    padding: "4px 0",
+                    minHeight: 44,
                   }}
                 >
                   {showForm ? "Sembunyikan" : "Tampilkan form"}
@@ -330,15 +331,34 @@ export default function BodyMetricsPage() {
 
               {showForm && (
                 <form onSubmit={handleSubmit} noValidate>
-                  {/* row 1 — basic */}
+
+                  {/* ── basic measurements — 2-col → 1-col on xs ── */}
                   <p className="label" style={{ marginBottom: 12 }}>Dasar</p>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-                    {/* Tinggi Badan — has prefill logic */}
+                  <div className="form-grid-2" style={{ marginBottom: 20 }}>
+
+                    {/* Tinggi Badan (with prefill) */}
                     <div>
-                      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
-                        <label className="label" htmlFor="tb" style={{ margin: 0 }}>Tinggi Badan (cm)</label>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "baseline",
+                          justifyContent: "space-between",
+                          marginBottom: 6,
+                          gap: 8,
+                        }}
+                      >
+                        <label className="label" htmlFor="tb" style={{ margin: 0 }}>
+                          Tinggi Badan (cm)
+                        </label>
                         {tbIsPrefilled && (
-                          <span style={{ fontSize: 10, color: "var(--txt-3)", letterSpacing: "0.04em" }}>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              color: "var(--txt-3)",
+                              letterSpacing: "0.04em",
+                              flexShrink: 0,
+                            }}
+                          >
                             dari riwayat
                           </span>
                         )}
@@ -347,20 +367,19 @@ export default function BodyMetricsPage() {
                         id="tb"
                         className="input"
                         type="number"
+                        inputMode="decimal"
                         step="0.1"
                         min="0"
                         placeholder="0.0"
-                        /*
-                         * When form.tb is empty AND we have a prefill, show the prefill
-                         * as the input value but styled as muted (placeholder-like).
-                         * Once the user types, form.tb is non-empty and overrides the prefill.
-                         */
-                        value={form.tb !== "" ? form.tb : (tbPrefill != null ? String(tbPrefill) : "")}
+                        value={
+                          form.tb !== ""
+                            ? form.tb
+                            : tbPrefill != null
+                            ? String(tbPrefill)
+                            : ""
+                        }
                         onChange={(e) => setField("tb", e.target.value)}
-                        style={{
-                          opacity: tbIsPrefilled ? 0.55 : 1,
-                          transition: "opacity 0.2s",
-                        }}
+                        style={{ opacity: tbIsPrefilled ? 0.55 : 1, transition: "opacity 0.2s" }}
                       />
                       {tbIsPrefilled && (
                         <p style={{ fontSize: 10.5, color: "var(--txt-3)", marginTop: 4 }}>
@@ -369,13 +388,14 @@ export default function BodyMetricsPage() {
                       )}
                     </div>
 
-                    {/* Berat Badan — unchanged */}
+                    {/* Berat Badan */}
                     <div>
                       <label className="label" htmlFor="bb">Berat Badan (kg)</label>
                       <input
                         id="bb"
                         className="input"
                         type="number"
+                        inputMode="decimal"
                         step="0.1"
                         min="0"
                         placeholder="0.0"
@@ -385,25 +405,33 @@ export default function BodyMetricsPage() {
                     </div>
                   </div>
 
-                  {/* row 2 — US Navy */}
+                  {/* ── US Navy measurements — 2-col → 1-col on xs ── */}
                   <p className="label" style={{ marginBottom: 12 }}>US Navy Method (cm)</p>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
-                    {[
-                      { id: "leher",    label: "Lingkar Leher",    field: "lingkar_leher"    as const },
-                      { id: "pinggang", label: "Lingkar Pinggang",  field: "lingkar_pinggang" as const },
-                      { id: "pinggul",  label: "Lingkar Pinggul",   field: "lingkar_pinggul"  as const },
-                    ].map(({ id, label, field }) => (
+                  <div className="form-grid-2" style={{ marginBottom: 20 }}>
+                    {(
+                      [
+                        { id: "leher",    label: "Lingkar Leher",    field: "lingkar_leher"    as const },
+                        { id: "pinggang", label: "Lingkar Pinggang",  field: "lingkar_pinggang" as const },
+                        { id: "pinggul",  label: "Lingkar Pinggul",   field: "lingkar_pinggul"  as const },
+                      ] as const
+                    ).map(({ id, label, field }) => (
                       <div key={id}>
                         <label className="label" htmlFor={id}>
                           {label}
                           {id === "pinggul" && selectedUser?.kelamin === "WANITA" && (
-                            <span style={{ color: "var(--accent)", marginLeft: 4 }}>*</span>
+                            <span
+                              aria-label="wajib"
+                              style={{ color: "var(--accent)", marginLeft: 4 }}
+                            >
+                              *
+                            </span>
                           )}
                         </label>
                         <input
                           id={id}
                           className="input"
                           type="number"
+                          inputMode="decimal"
                           step="0.1"
                           min="0"
                           placeholder="0.0"
@@ -412,7 +440,8 @@ export default function BodyMetricsPage() {
                         />
                       </div>
                     ))}
-                    {/* catatan */}
+
+                    {/* Catatan — spans 2nd col on desktop, full row on mobile */}
                     <div>
                       <label className="label" htmlFor="catatan">Catatan</label>
                       <input
@@ -427,20 +456,43 @@ export default function BodyMetricsPage() {
                   </div>
 
                   {formErr && (
-                    <p style={{ fontSize: 13, color: "var(--red)", marginBottom: 14 }}>⚠ {formErr}</p>
+                    <p
+                      role="alert"
+                      style={{ fontSize: 13, color: "var(--red)", marginBottom: 14 }}
+                    >
+                      ⚠ {formErr}
+                    </p>
                   )}
                   {submitOk && (
-                    <p style={{ fontSize: 13, color: "var(--green)", marginBottom: 14 }}>{submitOk}</p>
+                    <p
+                      role="status"
+                      style={{ fontSize: 13, color: "var(--green)", marginBottom: 14 }}
+                    >
+                      {submitOk}
+                    </p>
                   )}
 
-                  <div style={{ display: "flex", gap: 10 }}>
-                    <button type="submit" className="btn btn-primary" disabled={submitting || !form.user_id}>
-                      {submitting ? <><span className="spinner" /> Menyimpan…</> : "Simpan Metrics"}
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      disabled={submitting || !form.user_id}
+                      style={{ flex: "1 0 auto" }}
+                    >
+                      {submitting ? (
+                        <><span className="spinner" aria-hidden="true" /> Menyimpan…</>
+                      ) : (
+                        "Simpan Metrics"
+                      )}
                     </button>
                     <button
                       type="button"
                       className="btn btn-ghost"
-                      onClick={() => { setShowForm(false); setFormErr(null); setSubmitOk(null); }}
+                      onClick={() => {
+                        setShowForm(false);
+                        setFormErr(null);
+                        setSubmitOk(null);
+                      }}
                     >
                       Batal
                     </button>
@@ -450,7 +502,7 @@ export default function BodyMetricsPage() {
             </div>
           </div>
 
-          {/* ── RIGHT: Live preview + history ── */}
+          {/* ── RIGHT: preview + history column ──────────────── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
             {/* Live US Navy preview */}
@@ -458,7 +510,9 @@ export default function BodyMetricsPage() {
               className="card animate-fade-up delay-2"
               style={{
                 padding: "22px 22px",
-                border: preview ? `1px solid ${kColor!.color}33` : "1px solid var(--border)",
+                border: preview
+                  ? `1px solid ${kColor!.color}33`
+                  : "1px solid var(--border)",
                 transition: "border-color 0.3s var(--ease)",
               }}
             >
@@ -466,17 +520,28 @@ export default function BodyMetricsPage() {
 
               {!preview && (
                 <p style={{ fontSize: 13, color: "var(--txt-3)", lineHeight: 1.6 }}>
-                  Isi tinggi badan, lingkar leher, &amp; pinggang untuk melihat estimasi body fat secara real-time.
-                  {selectedUser?.kelamin === "WANITA" && " Untuk wanita, lingkar pinggul juga diperlukan."}
+                  Isi tinggi badan, lingkar leher, &amp; pinggang untuk melihat estimasi
+                  body fat secara real-time.
+                  {selectedUser?.kelamin === "WANITA" &&
+                    " Untuk wanita, lingkar pinggul juga diperlukan."}
                 </p>
               )}
 
               {preview && (
                 <div className="animate-fade-in">
-                  <div style={{ display: "flex", alignItems: "flex-end", gap: 12, marginBottom: 14 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-end",
+                      gap: 12,
+                      marginBottom: 14,
+                      flexWrap: "wrap",
+                    }}
+                  >
                     <span
                       className="display"
                       style={{ fontSize: "3.5rem", color: kColor!.color, lineHeight: 1 }}
+                      aria-label={`${preview.value} persen body fat`}
                     >
                       {preview.value}%
                     </span>
@@ -491,8 +556,8 @@ export default function BodyMetricsPage() {
                     Estimasi US Navy · belum disimpan
                   </p>
 
-                  {/* visual fat bar */}
-                  <div style={{ marginTop: 16 }}>
+                  {/* fat bar */}
+                  <div style={{ marginTop: 16 }} aria-hidden="true">
                     <div
                       style={{
                         height: 6,
@@ -512,7 +577,13 @@ export default function BodyMetricsPage() {
                         }}
                       />
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        marginTop: 6,
+                      }}
+                    >
                       <span style={{ fontSize: 10, color: "var(--txt-3)" }}>0%</span>
                       <span style={{ fontSize: 10, color: "var(--txt-3)" }}>40%+</span>
                     </div>
@@ -521,8 +592,11 @@ export default function BodyMetricsPage() {
               )}
             </div>
 
-            {/* History list — API returns newest-first, so display order is newest at top */}
-            <div className="card animate-fade-up delay-3" style={{ padding: "20px 22px" }}>
+            {/* History list */}
+            <div
+              className="card animate-fade-up delay-3"
+              style={{ padding: "20px 22px" }}
+            >
               <p className="label" style={{ marginBottom: 14 }}>
                 Riwayat {form.user_id ? `· ${records.length} entri` : ""}
               </p>
@@ -535,7 +609,7 @@ export default function BodyMetricsPage() {
 
               {form.user_id && loadingRecs && (
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span className="spinner" />
+                  <span className="spinner" aria-hidden="true" />
                   <span style={{ fontSize: 13, color: "var(--txt-2)" }}>Memuat…</span>
                 </div>
               )}
@@ -547,17 +621,27 @@ export default function BodyMetricsPage() {
               )}
 
               {!loadingRecs && records.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 380, overflowY: "auto", paddingRight: 4 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 8,
+                    maxHeight: 380,
+                    overflowY: "auto",
+                    paddingRight: 4,
+                  }}
+                >
                   {records.map((r) => {
-                    const bfColor = r.body_fat != null
-                      ? kategoriColor(
-                          r.body_fat < 5  ? "Sangat Kurus"
-                        : r.body_fat < 13 ? "Atlet"
-                        : r.body_fat < 17 ? "Bugar"
-                        : r.body_fat < 24 ? "Rata-rata"
-                        : "Gemoy"
-                        )
-                      : null;
+                    const bfColor =
+                      r.body_fat != null
+                        ? kategoriColor(
+                            r.body_fat < 5  ? "Sangat Kurus"
+                          : r.body_fat < 13 ? "Atlet"
+                          : r.body_fat < 17 ? "Bugar"
+                          : r.body_fat < 24 ? "Rata-rata"
+                          : "Gemoy"
+                          )
+                        : null;
 
                     return (
                       <div
@@ -569,8 +653,18 @@ export default function BodyMetricsPage() {
                           padding: "12px 14px",
                         }}
                       >
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                          <span style={{ fontSize: 11.5, color: "var(--txt-3)" }}>{fmtDate(r.created_at)}</span>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: 6,
+                            gap: 8,
+                          }}
+                        >
+                          <span style={{ fontSize: 11.5, color: "var(--txt-3)" }}>
+                            {fmtDate(r.created_at)}
+                          </span>
                           {r.body_fat != null && bfColor && (
                             <span
                               className="mono"
@@ -580,13 +674,38 @@ export default function BodyMetricsPage() {
                             </span>
                           )}
                         </div>
-                        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                          {r.bb  != null && <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>BB {r.bb} kg</span>}
-                          {r.tb  != null && <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>TB {r.tb} cm</span>}
-                          {r.lingkar_pinggang != null && <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>↔ {r.lingkar_pinggang} cm</span>}
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: 12,
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          {r.bb  != null && (
+                            <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>
+                              BB {r.bb} kg
+                            </span>
+                          )}
+                          {r.tb  != null && (
+                            <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>
+                              TB {r.tb} cm
+                            </span>
+                          )}
+                          {r.lingkar_pinggang != null && (
+                            <span style={{ fontSize: 11.5, color: "var(--txt-2)" }}>
+                              ↔ {r.lingkar_pinggang} cm
+                            </span>
+                          )}
                         </div>
                         {r.catatan && (
-                          <p style={{ fontSize: 11.5, color: "var(--txt-3)", marginTop: 4, fontStyle: "italic" }}>
+                          <p
+                            style={{
+                              fontSize: 11.5,
+                              color: "var(--txt-3)",
+                              marginTop: 4,
+                              fontStyle: "italic",
+                            }}
+                          >
                             &ldquo;{r.catatan}&rdquo;
                           </p>
                         )}
@@ -598,7 +717,9 @@ export default function BodyMetricsPage() {
             </div>
 
             {error && (
-              <p style={{ fontSize: 12, color: "var(--red)" }}>⚠ {error}</p>
+              <p role="alert" style={{ fontSize: 12, color: "var(--red)" }}>
+                ⚠ {error}
+              </p>
             )}
           </div>
         </div>

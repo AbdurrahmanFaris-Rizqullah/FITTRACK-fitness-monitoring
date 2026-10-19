@@ -403,13 +403,8 @@ function DashboardInner() {
       <Navbar />
 
       <main
-        style={{
-          flex: 1,
-          maxWidth: 1120,
-          margin: "0 auto",
-          padding: "40px 24px 60px",
-          width: "100%",
-        }}
+        className="main-pad"
+        style={{ paddingBottom: 60 }}
       >
         {/* ── Page header ── */}
         <div
@@ -434,9 +429,19 @@ function DashboardInner() {
           </div>
 
           {loadingU ? (
-            <span className="spinner" />
+            <span className="spinner" aria-label="Memuat users…" />
           ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+                /* on mobile, allow horizontal scroll if many users */
+                overflowX: "auto",
+                paddingBottom: 2,
+              }}
+            >
               {users.map((u) => (
                 <button
                   key={u.id_user}
@@ -451,6 +456,9 @@ function DashboardInner() {
                     border: `1px solid ${userId === u.id_user ? "var(--accent-dim)" : "var(--border)"}`,
                     cursor: "pointer",
                     transition: "all 0.15s var(--ease)",
+                    flexShrink: 0,
+                    minHeight: 38,
+                    whiteSpace: "nowrap",
                   }}
                 >
                   {u.username}
@@ -552,18 +560,37 @@ function DashboardInner() {
               >
                 {selectedUser.kelamin === "WANITA" ? "🧘‍♀️" : "💪"}
               </div>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: "var(--txt)" }}>
+
+              {/* name + subtitle — allow text to wrap on narrow screens */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 15,
+                    fontWeight: 600,
+                    color: "var(--txt)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {selectedUser.username}
                 </div>
-                <div style={{ fontSize: 12, color: "var(--txt-2)" }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--txt-2)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {selectedUser.kelamin ?? "Kelamin belum diset"}
                   {selectedUser.tanggal_lahir && (
                     <>
                       {" · "}
                       {new Date(selectedUser.tanggal_lahir).toLocaleDateString("id-ID", {
                         day: "numeric",
-                        month: "long",
+                        month: "short",
                         year: "numeric",
                       })}
                     </>
